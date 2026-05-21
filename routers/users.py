@@ -54,6 +54,37 @@ def list_users(current_user=Depends(get_current_user)):
     conn.close()
     return rows
 
+@router.post("/setup-admin")
+def setup_first_admin(data: UserCreate):
+    """
+    One-time endpoint to create the first super admin.
+    Only works if no users exist yet.
+    """
+    conn = db.get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) as count FROM users")
+        count = cur.fetchone()["count"]
+        if count > 0:
+            conn.close()
+            raise HTTPException(status_code=403,
+                detail="Admin already exists. Use normal login.")
+        try:
+            cur.execute("""
+                INSERT INTO users (company_id, branch_id, username, password,
+                                   full_name, email, role)
+                VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id
+            """, (None, None, data.username, hash_password(data.password),
+                  data.full_name, data.email, "super_admin"))
+            user_id = cur.fetchone()["id"]
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            raise HTTPException(status_code=400, detail=str(e))
+    conn.close()
+    return {"message": "Super admin created successfully.", "id": user_id}
+
+
 @router.post("/")
 def create_user(data: UserCreate, current_user=Depends(get_current_user)):
     if current_user["role"] not in ["super_admin", "company_admin"]:
