@@ -33,6 +33,9 @@ def init_db():
                     created_at  TIMESTAMP DEFAULT NOW()
                 );
             """)
+            # Ensure logo columns exist on existing tables
+            cur.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS logo_url TEXT")
+            cur.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS logo_base64 TEXT")
 
             # Branches
             cur.execute("""
