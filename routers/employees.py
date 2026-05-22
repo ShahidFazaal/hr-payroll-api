@@ -22,6 +22,7 @@ class EmployeeCreate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     basic_salary: float = 0
+    is_active: bool = True
 
 class AllowanceCreate(BaseModel):
     allowance_type: str
@@ -43,7 +44,7 @@ def list_employees(company_id: Optional[int] = None,
             FROM employees e
             LEFT JOIN companies c ON e.company_id = c.id
             LEFT JOIN branches b ON e.home_branch_id = b.id
-            WHERE e.is_active = TRUE
+            WHERE 1=1
         """
         params = []
         if current_user["role"] == "branch_manager":
@@ -112,10 +113,10 @@ def update_employee(employee_id: int, data: EmployeeCreate, current_user=Depends
         cur.execute("""
             UPDATE employees SET company_id=%s, home_branch_id=%s, device_user_id=%s,
             employee_code=%s, full_name=%s, full_name_ar=%s, position=%s, join_date=%s,
-            phone=%s, email=%s, basic_salary=%s WHERE id=%s
+            phone=%s, email=%s, basic_salary=%s, is_active=%s WHERE id=%s
         """, (data.company_id, data.home_branch_id, data.device_user_id, data.employee_code,
               data.full_name, data.full_name_ar, data.position, data.join_date,
-              data.phone, data.email, data.basic_salary, employee_id))
+              data.phone, data.email, data.basic_salary, data.is_active, employee_id))
         conn.commit()
     conn.close()
     return {"message": "Employee updated."}
