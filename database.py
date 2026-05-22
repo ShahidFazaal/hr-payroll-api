@@ -28,6 +28,7 @@ def init_db():
                     phone       TEXT,
                     email       TEXT,
                     logo_url    TEXT,
+                    logo_base64 TEXT,
                     is_active   BOOLEAN DEFAULT TRUE,
                     created_at  TIMESTAMP DEFAULT NOW()
                 );
@@ -172,7 +173,35 @@ def init_db():
                     notes               TEXT,
                     status              TEXT DEFAULT 'draft',
                     generated_by        INTEGER REFERENCES users(id),
-                    generated_at        TIMESTAMP DEFAULT NOW()
+                    generated_at        TIMESTAMP DEFAULT NOW(),
+                    submitted_by        INTEGER REFERENCES users(id),
+                    submitted_at        TIMESTAMP,
+                    approved_by         INTEGER REFERENCES users(id),
+                    approved_at         TIMESTAMP,
+                    rejected_reason     TEXT,
+                    finalized_at        TIMESTAMP
+                );
+            """)
+
+            # Payroll Batches — group all employees for one period
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS payroll_batches (
+                    id              SERIAL PRIMARY KEY,
+                    company_id      INTEGER REFERENCES companies(id),
+                    period_start    DATE NOT NULL,
+                    period_end      DATE NOT NULL,
+                    total_employees INTEGER DEFAULT 0,
+                    total_payroll   NUMERIC(12,2) DEFAULT 0,
+                    status          TEXT DEFAULT 'draft',
+                    generated_by    INTEGER REFERENCES users(id),
+                    generated_at    TIMESTAMP DEFAULT NOW(),
+                    submitted_by    INTEGER REFERENCES users(id),
+                    submitted_at    TIMESTAMP,
+                    approved_by     INTEGER REFERENCES users(id),
+                    approved_at     TIMESTAMP,
+                    rejected_reason TEXT,
+                    finalized_at    TIMESTAMP,
+                    UNIQUE(company_id, period_start, period_end)
                 );
             """)
 
