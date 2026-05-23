@@ -45,8 +45,8 @@ def save_batch(data: BatchSave, current_user=Depends(get_current_user)):
             DO UPDATE SET
                 total_employees=%s, total_payroll=%s,
                 generated_by=%s, generated_at=NOW(),
-                status=CASE WHEN payroll_batches.status='draft' THEN 'draft'
-                            ELSE payroll_batches.status END
+                status=CASE WHEN payroll_batches.status IN ('finalized') THEN 'finalized'
+                            ELSE 'draft' END
             RETURNING id
         """, (
             data.company_id, data.period_start, data.period_end,
@@ -57,7 +57,14 @@ def save_batch(data: BatchSave, current_user=Depends(get_current_user)):
         ))
         batch_id = cur.fetchone()["id"]
 
-        # Save individual records
+        # Delete existing records for this period first then reinsert
+        cur.execute("""
+            DELETE FROM payroll_records
+            WHERE company_id=%s AND period_start=%s AND period_end=%s
+              AND status NOT IN ('finalized')
+        """, (data.company_id, data.period_start, data.period_end))
+
+        # Save individual records fresh
         for r in data.records:
             cur.execute("""
                 INSERT INTO payroll_records (
@@ -71,7 +78,6 @@ def save_batch(data: BatchSave, current_user=Depends(get_current_user)):
                 ) VALUES (
                     %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft',%s
                 )
-                ON CONFLICT DO NOTHING
             """, (
                 r["employee_id"], data.company_id, data.period_start, data.period_end,
                 r["working_days"], r["present_days"], r["absent_days"], r["late_count"],
@@ -212,7 +218,8 @@ def get_batch_detail(batch_id: int, current_user=Depends(get_current_user)):
     conn = db.get_conn()
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT pb.*, c.name as company_name, c.logo_base64,
+            SELECT pb.*, c.name as company_name,
+                COALESCE(c.logo_base64, '') as logo_base64,
                 c.address as company_address,
                 ug.full_name as generated_by_name,
                 ua.full_name as approved_by_name
