@@ -6,7 +6,7 @@ Developed by: Shahid Fazaal
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import database as db
-from routers import auth, companies, branches, users, employees, roster, attendance, payroll, settings, payroll_history
+from routers import auth, companies, branches, users, employees, roster, attendance, payroll, settings, payroll_history, leave
 
 app = FastAPI(title="HR & Payroll System API")
 
@@ -29,7 +29,8 @@ app.include_router(roster.router,     prefix="/api/roster",     tags=["Roster"])
 app.include_router(attendance.router, prefix="/api/attendance", tags=["Attendance"])
 app.include_router(payroll.router,    prefix="/api/payroll",    tags=["Payroll"])
 app.include_router(settings.router,        prefix="/api/settings",        tags=["Settings"])
-app.include_router(payroll_history.router, prefix="/api/payroll-history",   tags=["Payroll History"])
+app.include_router(payroll_history.router, prefix="/api/payroll-history", tags=["Payroll History"])
+app.include_router(leave.router,           prefix="/api/leave",            tags=["Leave Management"])
 
 @app.on_event("startup")
 def startup():
