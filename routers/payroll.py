@@ -85,12 +85,14 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
 
     # Calculate metrics
     working_days = 0
+    day_off_days = 0
     present_days = 0
     absent_days = 0
     late_count = 0
     late_minutes = 0
     early_departure_count = 0
     overtime_hours = 0.0
+    total_hours = 0.0
     late_threshold = emp.get("late_threshold_minutes", 15)
     std_hours = float(emp.get("standard_hours_per_day", 8))
 
@@ -101,6 +103,7 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
 
         if roster_day:
             if roster_day["is_day_off"]:
+                day_off_days += 1
                 current += timedelta(days=1)
                 continue
             working_days += 1
@@ -109,6 +112,11 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
                 present_days += 1
                 first_punch = att_day[0]["first_punch"]
                 last_punch = att_day[0]["last_punch"]
+                if first_punch and last_punch:
+                    hours_worked = (last_punch - first_punch).total_seconds() / 3600
+                    total_hours += hours_worked
+                    if hours_worked > std_hours:
+                        overtime_hours += hours_worked - std_hours
                 if roster_day.get("shift_start") and first_punch:
                     shift_start = datetime.combine(current,
                                   datetime.strptime(str(roster_day["shift_start"]), "%H:%M:%S").time())
@@ -119,9 +127,6 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
                 if roster_day.get("shift_end") and last_punch:
                     shift_end = datetime.combine(current,
                                 datetime.strptime(str(roster_day["shift_end"]), "%H:%M:%S").time())
-                    hours_worked = (last_punch - first_punch).total_seconds() / 3600
-                    if hours_worked > std_hours:
-                        overtime_hours += hours_worked - std_hours
                     if last_punch < shift_end - timedelta(minutes=15):
                         early_departure_count += 1
             else:
@@ -148,12 +153,14 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
         "full_name": emp["full_name"],
         "employee_code": emp.get("employee_code"),
         "working_days": working_days,
+        "day_off_days": day_off_days,
         "present_days": present_days,
         "absent_days": absent_days,
         "late_count": late_count,
         "late_minutes": late_minutes,
         "early_departure_count": early_departure_count,
         "overtime_hours": round(overtime_hours, 2),
+        "total_hours": round(total_hours, 2),
         "basic_salary": basic,
         "total_allowances": total_allowances,
         "variable_pay": variable_pay,
@@ -178,6 +185,7 @@ def generate_payroll(data: PayrollGenerate, current_user=Depends(get_current_use
             SELECT id FROM employees
             WHERE company_id = %s AND is_active = TRUE
         """
+        # Always exclude inactive employees from payroll
         params = [data.company_id]
         if data.branch_ids:
             query += " AND home_branch_id = ANY(%s)"
