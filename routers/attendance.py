@@ -167,32 +167,29 @@ def get_daily_summary(employee_id: int,
         """, (employee_id, date_from, date_to))
         roster = {r["work_date"]: dict(r) for r in cur.fetchall()}
 
-        # Get all punches for period
+        # Get all punches for period — group by date only (ignore punch_type)
         cur.execute("""
             SELECT DATE(punch_time)::text as punch_date,
                    MIN(punch_time) as first_punch,
                    MAX(punch_time) as last_punch,
                    COUNT(*) as punch_count,
-                   punch_type
+                   array_agg(punch_time ORDER BY punch_time) as all_punches
             FROM attendance_logs
             WHERE employee_id = %s AND punch_time::date BETWEEN %s AND %s
-            GROUP BY DATE(punch_time), punch_type
+            GROUP BY DATE(punch_time)
             ORDER BY DATE(punch_time)
         """, (employee_id, date_from, date_to))
         raw_punches = cur.fetchall()
 
-        # Group by date - get first and last punch per day
+        # Build punch map by date
         punches_by_date = {}
         for p in raw_punches:
-            d = p["punch_date"]
-            if d not in punches_by_date:
-                punches_by_date[d] = {"first": p["first_punch"], "last": p["last_punch"], "count": p["punch_count"]}
-            else:
-                if p["first_punch"] < punches_by_date[d]["first"]:
-                    punches_by_date[d]["first"] = p["first_punch"]
-                if p["last_punch"] > punches_by_date[d]["last"]:
-                    punches_by_date[d]["last"] = p["last_punch"]
-                punches_by_date[d]["count"] += p["punch_count"]
+            punches_by_date[p["punch_date"]] = {
+                "first": p["first_punch"],
+                "last": p["last_punch"],
+                "count": p["punch_count"],
+                "all": p["all_punches"],
+            }
 
         # Get approved leaves for period
         cur.execute("""
