@@ -180,6 +180,50 @@ def delete_leave_type(lt_id: int, current_user=Depends(get_current_user)):
     }
 
 
+@router.delete("/types/{lt_id}/permanent")
+def permanently_delete_leave_type(lt_id: int, current_user=Depends(get_current_user)):
+    """Permanently delete archived leave type if no usage exists."""
+    if current_user["role"] not in ["super_admin", "company_admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized.")
+    conn = db.get_conn()
+    with conn.cursor() as cur:
+        # Check usage
+        cur.execute("SELECT COUNT(*) as c FROM leave_requests WHERE leave_type_id=%s", (lt_id,))
+        if cur.fetchone()["c"] > 0:
+            conn.close()
+            raise HTTPException(status_code=400, detail="Cannot delete — leave requests exist for this type.")
+        # Delete balances first then type
+        cur.execute("DELETE FROM leave_balances WHERE leave_type_id=%s", (lt_id,))
+        cur.execute("DELETE FROM leave_types WHERE id=%s AND is_active=FALSE", (lt_id,))
+        conn.commit()
+    conn.close()
+    return {"message": "Leave type permanently deleted."}
+
+
+@router.post("/cleanup")
+def cleanup_archived_types(company_id: int, current_user=Depends(get_current_user)):
+    """Remove all archived leave types and their balances if no requests exist."""
+    if current_user["role"] not in ["super_admin", "company_admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized.")
+    conn = db.get_conn()
+    deleted = 0
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT id FROM leave_types
+            WHERE company_id=%s AND is_active=FALSE
+        """, (company_id,))
+        archived = [r["id"] for r in cur.fetchall()]
+        for lt_id in archived:
+            cur.execute("SELECT COUNT(*) as c FROM leave_requests WHERE leave_type_id=%s", (lt_id,))
+            if cur.fetchone()["c"] == 0:
+                cur.execute("DELETE FROM leave_balances WHERE leave_type_id=%s", (lt_id,))
+                cur.execute("DELETE FROM leave_types WHERE id=%s", (lt_id,))
+                deleted += 1
+        conn.commit()
+    conn.close()
+    return {"message": f"Cleaned up {deleted} archived leave types.", "deleted": deleted}
+
+
 # ── Leave Balances ───────────────────────────────────────────────────────────
 
 @router.get("/balances")
