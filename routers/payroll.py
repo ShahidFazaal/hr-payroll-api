@@ -217,7 +217,7 @@ def generate_payroll(data: PayrollGenerate, current_user=Depends(get_current_use
             # Get employees
             query = """
                 SELECT id FROM employees
-                WHERE company_id = %s AND is_active = TRUE
+                WHERE company_id = %s AND is_active IS NOT FALSE
             """
             params = [data.company_id]
             if data.branch_ids:
