@@ -33,11 +33,15 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
 
     # Get employee details
     cur.execute("""
-        SELECT e.*, cs.late_threshold_minutes, cs.standard_hours_per_day,
-               cs.overtime_threshold_hours, cs.working_days_per_week,
-               cs.enable_overnight_shifts, cs.overnight_grace_hours
+        SELECT e.*,
+               COALESCE(cs.late_threshold_minutes, 15) as late_threshold_minutes,
+               COALESCE(cs.standard_hours_per_day, 8) as standard_hours_per_day,
+               COALESCE(cs.overtime_threshold_hours, 8) as overtime_threshold_hours,
+               COALESCE(cs.working_days_per_week, 6) as working_days_per_week,
+               COALESCE(cs.enable_overnight_shifts, TRUE) as enable_overnight_shifts,
+               COALESCE(cs.overnight_grace_hours, 6) as overnight_grace_hours
         FROM employees e
-        JOIN company_settings cs ON e.company_id = cs.company_id
+        LEFT JOIN company_settings cs ON e.company_id = cs.company_id
         WHERE e.id = %s
     """, (employee_id,))
     emp = cur.fetchone()
@@ -55,7 +59,8 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
 
     # Get roster for period
     cur.execute("""
-        SELECT work_date, is_day_off, shift_start, shift_end, branch_id
+        SELECT work_date, is_day_off, shift_start, shift_end, branch_id,
+               COALESCE(next_day_end, FALSE) as next_day_end
         FROM weekly_roster
         WHERE employee_id = %s AND work_date BETWEEN %s AND %s
         ORDER BY work_date
