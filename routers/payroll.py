@@ -57,13 +57,17 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
 
     # Get roster for period
     cur.execute("""
-        SELECT work_date, is_day_off, shift_start, shift_end, branch_id,
-               COALESCE(next_day_end, FALSE) as next_day_end
+        SELECT work_date, is_day_off, shift_start, shift_end, branch_id
         FROM weekly_roster
         WHERE employee_id = %s AND work_date BETWEEN %s AND %s
         ORDER BY work_date
     """, (employee_id, period_start, period_end))
-    roster = {str(r["work_date"]): dict(r) for r in cur.fetchall()}
+    roster_rows = cur.fetchall()
+    roster = {}
+    for r in roster_rows:
+        d = dict(r)
+        d["next_day_end"] = d.get("next_day_end", False) or False
+        roster[str(r["work_date"])] = d
 
     # Get attendance for period across all branches
     cur.execute("""
@@ -238,14 +242,17 @@ def generate_payroll(data: PayrollGenerate, current_user=Depends(get_current_use
             results = []
             for emp_id in employee_ids:
                 try:
+                    cur.execute("SAVEPOINT emp_payroll")
                     result = calculate_payroll_for_employee(
                         cur, emp_id, data.company_id,
                         data.period_start, data.period_end,
                         override_map.get(emp_id)
                     )
+                    cur.execute("RELEASE SAVEPOINT emp_payroll")
                     if result:
                         results.append(result)
                 except Exception as e:
+                    cur.execute("ROLLBACK TO SAVEPOINT emp_payroll")
                     print(f">>> Payroll error for employee {emp_id}: {e}")
                     continue
     except Exception as e:
