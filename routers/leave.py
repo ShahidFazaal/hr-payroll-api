@@ -92,14 +92,23 @@ def get_holidays(conn, company_id: int, year: int) -> list:
 # ── Leave Types ──────────────────────────────────────────────────────────────
 
 @router.get("/types")
-def list_leave_types(company_id: int, current_user=Depends(get_current_user)):
+def list_leave_types(company_id: int,
+                     include_archived: bool = False,
+                     current_user=Depends(get_current_user)):
     conn = db.get_conn()
     with conn.cursor() as cur:
-        cur.execute("""
-            SELECT * FROM leave_types
-            WHERE company_id=%s AND is_active=TRUE
-            ORDER BY name
-        """, (company_id,))
+        if include_archived:
+            cur.execute("""
+                SELECT * FROM leave_types
+                WHERE company_id=%s
+                ORDER BY is_active DESC, name
+            """, (company_id,))
+        else:
+            cur.execute("""
+                SELECT * FROM leave_types
+                WHERE company_id=%s AND is_active=TRUE
+                ORDER BY name
+            """, (company_id,))
         rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
@@ -147,10 +156,28 @@ def update_leave_type(lt_id: int, data: LeaveTypeCreate, current_user=Depends(ge
 def delete_leave_type(lt_id: int, current_user=Depends(get_current_user)):
     conn = db.get_conn()
     with conn.cursor() as cur:
+        # Check how many employees have balances or requests
+        cur.execute("""
+            SELECT COUNT(DISTINCT employee_id) as balance_count
+            FROM leave_balances WHERE leave_type_id=%s AND used_days > 0
+        """, (lt_id,))
+        balance_row = cur.fetchone()
+        cur.execute("""
+            SELECT COUNT(*) as request_count
+            FROM leave_requests WHERE leave_type_id=%s AND status='approved'
+        """, (lt_id,))
+        request_row = cur.fetchone()
+        balance_count = balance_row["balance_count"] if balance_row else 0
+        request_count = request_row["request_count"] if request_row else 0
         cur.execute("UPDATE leave_types SET is_active=FALSE WHERE id=%s", (lt_id,))
         conn.commit()
     conn.close()
-    return {"message": "Leave type deactivated."}
+    return {
+        "message": "Leave type archived.",
+        "warning": f"{balance_count} employees had balances, {request_count} approved requests exist. Data preserved for audit." if (balance_count > 0 or request_count > 0) else None,
+        "balance_count": balance_count,
+        "request_count": request_count,
+    }
 
 
 # ── Leave Balances ───────────────────────────────────────────────────────────
@@ -163,7 +190,8 @@ def get_balances(company_id: int, year: int,
     with conn.cursor() as cur:
         query = """
             SELECT lb.*, e.full_name, e.employee_code,
-                   lt.name as leave_type_name, lt.is_paid
+                   lt.name as leave_type_name, lt.is_paid,
+                   lt.is_active as is_active
             FROM leave_balances lb
             JOIN employees e ON lb.employee_id = e.id
             JOIN leave_types lt ON lb.leave_type_id = lt.id
