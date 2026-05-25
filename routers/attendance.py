@@ -197,15 +197,18 @@ def get_daily_summary(employee_id: int,
             }
 
         # Get approved leaves for period
-        cur.execute("""
-            SELECT lr.start_date::text, lr.end_date::text,
-                   lt.name as leave_type, lr.is_paid, lr.is_half_day, lr.half_day_period
-            FROM leave_requests lr
-            JOIN leave_types lt ON lr.leave_type_id = lt.id
-            WHERE lr.employee_id = %s AND lr.status = 'approved'
-              AND lr.start_date <= %s AND lr.end_date >= %s
-        """, (employee_id, date_to, date_from))
-        leaves = cur.fetchall()
+        try:
+            cur.execute("""
+                SELECT lr.start_date::text, lr.end_date::text,
+                       lt.name as leave_type, lr.is_paid, lr.is_half_day, lr.half_day_period
+                FROM leave_requests lr
+                JOIN leave_types lt ON lr.leave_type_id = lt.id
+                WHERE lr.employee_id = %s AND lr.status = 'approved'
+                  AND lr.start_date <= %s AND lr.end_date >= %s
+            """, (employee_id, date_to, date_from))
+            leaves = cur.fetchall()
+        except Exception:
+            leaves = []
 
         # Build leave date map
         leave_map = {}
