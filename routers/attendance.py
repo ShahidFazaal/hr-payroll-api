@@ -161,12 +161,15 @@ def get_daily_summary(employee_id: int,
 
         # Get roster for period (include one extra day for overnight)
         cur.execute("""
-            SELECT work_date::text, is_day_off, shift_start, shift_end,
-                   COALESCE(next_day_end, FALSE) as next_day_end
+            SELECT work_date::text, is_day_off, shift_start, shift_end
             FROM weekly_roster
             WHERE employee_id = %s AND work_date BETWEEN %s AND %s
         """, (employee_id, date_from, date_to))
-        roster = {r["work_date"]: dict(r) for r in cur.fetchall()}
+        roster = {}
+        for r in cur.fetchall():
+            d = dict(r)
+            d["next_day_end"] = d.get("next_day_end", False) or False
+            roster[r["work_date"]] = d
 
         # Get all punches (include one extra day for overnight checkouts)
         cur.execute("""
