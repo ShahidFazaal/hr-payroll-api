@@ -128,3 +128,185 @@ def get_attendance_summary(employee_id: int,
         rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
+
+
+@router.get("/daily-summary")
+def get_daily_summary(employee_id: int,
+                       date_from: date,
+                       date_to: date,
+                       current_user=Depends(get_current_user)):
+    """
+    Returns a daily attendance summary for one employee.
+    Groups punches by date, matches with roster and leave records.
+    """
+    from datetime import timedelta
+
+    conn = db.get_conn()
+    with conn.cursor() as cur:
+
+        # Get employee info + company settings
+        cur.execute("""
+            SELECT e.*, cs.late_threshold_minutes, cs.standard_hours_per_day
+            FROM employees e
+            LEFT JOIN company_settings cs ON e.company_id = cs.company_id
+            WHERE e.id = %s
+        """, (employee_id,))
+        emp = cur.fetchone()
+        if not emp:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Employee not found.")
+
+        late_threshold = emp["late_threshold_minutes"] or 15
+        std_hours = float(emp["standard_hours_per_day"] or 8)
+
+        # Get roster for period
+        cur.execute("""
+            SELECT work_date::text, is_day_off, shift_start, shift_end
+            FROM weekly_roster
+            WHERE employee_id = %s AND work_date BETWEEN %s AND %s
+        """, (employee_id, date_from, date_to))
+        roster = {r["work_date"]: dict(r) for r in cur.fetchall()}
+
+        # Get all punches for period
+        cur.execute("""
+            SELECT DATE(punch_time)::text as punch_date,
+                   MIN(punch_time) as first_punch,
+                   MAX(punch_time) as last_punch,
+                   COUNT(*) as punch_count,
+                   punch_type
+            FROM attendance_logs
+            WHERE employee_id = %s AND punch_time::date BETWEEN %s AND %s
+            GROUP BY DATE(punch_time), punch_type
+            ORDER BY DATE(punch_time)
+        """, (employee_id, date_from, date_to))
+        raw_punches = cur.fetchall()
+
+        # Group by date - get first and last punch per day
+        punches_by_date = {}
+        for p in raw_punches:
+            d = p["punch_date"]
+            if d not in punches_by_date:
+                punches_by_date[d] = {"first": p["first_punch"], "last": p["last_punch"], "count": p["punch_count"]}
+            else:
+                if p["first_punch"] < punches_by_date[d]["first"]:
+                    punches_by_date[d]["first"] = p["first_punch"]
+                if p["last_punch"] > punches_by_date[d]["last"]:
+                    punches_by_date[d]["last"] = p["last_punch"]
+                punches_by_date[d]["count"] += p["punch_count"]
+
+        # Get approved leaves for period
+        cur.execute("""
+            SELECT lr.start_date::text, lr.end_date::text,
+                   lt.name as leave_type, lr.is_paid, lr.is_half_day, lr.half_day_period
+            FROM leave_requests lr
+            JOIN leave_types lt ON lr.leave_type_id = lt.id
+            WHERE lr.employee_id = %s AND lr.status = 'approved'
+              AND lr.start_date <= %s AND lr.end_date >= %s
+        """, (employee_id, date_to, date_from))
+        leaves = cur.fetchall()
+
+        # Build leave date map
+        leave_map = {}
+        for lv in leaves:
+            start = datetime.strptime(lv["start_date"], "%Y-%m-%d").date()
+            end   = datetime.strptime(lv["end_date"], "%Y-%m-%d").date()
+            curr  = start
+            while curr <= end:
+                leave_map[str(curr)] = {
+                    "leave_type": lv["leave_type"],
+                    "is_paid": lv["is_paid"],
+                    "is_half_day": lv["is_half_day"],
+                    "half_day_period": lv["half_day_period"],
+                }
+                curr += timedelta(days=1)
+
+        # Build daily summary
+        days = []
+        current = date_from
+        while current <= date_to:
+            date_str = str(current)
+            roster_day = roster.get(date_str)
+            punch = punches_by_date.get(date_str)
+            leave = leave_map.get(date_str)
+
+            day_data = {
+                "date": date_str,
+                "day_name": current.strftime("%a"),
+                "in_roster": roster_day is not None,
+                "is_day_off": roster_day["is_day_off"] if roster_day else None,
+                "shift_start": str(roster_day["shift_start"]) if roster_day and roster_day.get("shift_start") else None,
+                "shift_end": str(roster_day["shift_end"]) if roster_day and roster_day.get("shift_end") else None,
+                "check_in": None,
+                "check_out": None,
+                "hours_worked": None,
+                "punch_count": 0,
+                "late_minutes": 0,
+                "status": "no_roster",
+                "leave": None,
+            }
+
+            # Day off
+            if roster_day and roster_day["is_day_off"]:
+                day_data["status"] = "day_off"
+                if punch:
+                    day_data["status"] = "worked_on_day_off"
+                    day_data["check_in"] = punch["first"].isoformat() if punch["first"] else None
+                    day_data["check_out"] = punch["last"].isoformat() if punch["last"] else None
+                    if punch["first"] and punch["last"]:
+                        hours = (punch["last"] - punch["first"]).total_seconds() / 3600
+                        day_data["hours_worked"] = round(hours, 2)
+
+            # Working day
+            elif roster_day and not roster_day["is_day_off"]:
+                if leave:
+                    day_data["status"] = "on_leave"
+                    day_data["leave"] = leave
+                elif punch:
+                    day_data["check_in"] = punch["first"].isoformat() if punch["first"] else None
+                    day_data["check_out"] = punch["last"].isoformat() if punch["last"] else None
+                    day_data["punch_count"] = punch["count"]
+
+                    # Calculate hours
+                    if punch["first"] and punch["last"]:
+                        hours = (punch["last"] - punch["first"]).total_seconds() / 3600
+                        day_data["hours_worked"] = round(hours, 2)
+
+                    # Check late
+                    if roster_day.get("shift_start") and punch["first"]:
+                        shift_dt = datetime.combine(current,
+                            datetime.strptime(str(roster_day["shift_start"]), "%H:%M:%S").time())
+                        late_mins = (punch["first"] - shift_dt).total_seconds() / 60
+                        if late_mins > late_threshold:
+                            day_data["late_minutes"] = int(late_mins)
+                            day_data["status"] = "late"
+                        else:
+                            day_data["status"] = "present"
+                    else:
+                        day_data["status"] = "present"
+
+                    # Missing check out
+                    if punch["first"] == punch["last"] and punch["count"] == 1:
+                        day_data["missing_checkout"] = True
+                        if day_data["status"] == "present":
+                            day_data["status"] = "missing_checkout"
+                else:
+                    day_data["status"] = "absent"
+
+            days.append(day_data)
+            current += timedelta(days=1)
+
+    conn.close()
+
+    # Summary counts
+    summary = {
+        "working_days": sum(1 for d in days if d["in_roster"] and not d["is_day_off"]),
+        "day_off": sum(1 for d in days if d["status"] == "day_off"),
+        "present": sum(1 for d in days if d["status"] in ("present", "late", "missing_checkout")),
+        "absent": sum(1 for d in days if d["status"] == "absent"),
+        "late": sum(1 for d in days if d["status"] == "late"),
+        "on_leave": sum(1 for d in days if d["status"] == "on_leave"),
+        "worked_on_day_off": sum(1 for d in days if d["status"] == "worked_on_day_off"),
+        "total_hours": round(sum(d["hours_worked"] or 0 for d in days), 2),
+    }
+
+    return {"days": days, "summary": summary}
