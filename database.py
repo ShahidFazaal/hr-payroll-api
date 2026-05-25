@@ -225,3 +225,139 @@ def init_db():
             """)
 
         conn.commit()
+
+
+def migrate_db():
+    """
+    Run safe migrations on every startup.
+    Column additions run individually.
+    Leave tables created together in one transaction (FK dependencies).
+    """
+
+    # ── Create leave tables in one transaction ──────────────────────────────
+    try:
+        conn = get_conn()
+        print(">>> migrate_db: creating leave tables...")
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS leave_types (
+                    id                   SERIAL PRIMARY KEY,
+                    company_id           INTEGER REFERENCES companies(id),
+                    name                 TEXT NOT NULL,
+                    name_ar              TEXT,
+                    is_paid              BOOLEAN DEFAULT TRUE,
+                    deduction_percentage NUMERIC(5,2) DEFAULT 0,
+                    max_days_per_year    NUMERIC(5,1) DEFAULT 30,
+                    requires_document    BOOLEAN DEFAULT FALSE,
+                    allow_half_day       BOOLEAN DEFAULT TRUE,
+                    carry_forward        BOOLEAN DEFAULT FALSE,
+                    max_carry_days       INTEGER DEFAULT 0,
+                    is_active            BOOLEAN DEFAULT TRUE,
+                    created_at           TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS leave_balances (
+                    id             SERIAL PRIMARY KEY,
+                    employee_id    INTEGER REFERENCES employees(id),
+                    leave_type_id  INTEGER REFERENCES leave_types(id),
+                    year           INTEGER NOT NULL,
+                    entitled_days  NUMERIC(5,1) DEFAULT 0,
+                    used_days      NUMERIC(5,1) DEFAULT 0,
+                    carried_days   NUMERIC(5,1) DEFAULT 0,
+                    remaining_days NUMERIC(5,1) DEFAULT 0,
+                    UNIQUE(employee_id, leave_type_id, year)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS public_holidays (
+                    id         SERIAL PRIMARY KEY,
+                    company_id INTEGER REFERENCES companies(id),
+                    name       TEXT NOT NULL,
+                    name_ar    TEXT,
+                    date       DATE NOT NULL,
+                    year       INTEGER NOT NULL,
+                    is_active  BOOLEAN DEFAULT TRUE
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS leave_requests (
+                    id                   SERIAL PRIMARY KEY,
+                    employee_id          INTEGER REFERENCES employees(id),
+                    company_id           INTEGER REFERENCES companies(id),
+                    branch_id            INTEGER REFERENCES branches(id),
+                    leave_type_id        INTEGER REFERENCES leave_types(id),
+                    start_date           DATE NOT NULL,
+                    end_date             DATE NOT NULL,
+                    days_count           NUMERIC(5,1) NOT NULL,
+                    is_half_day          BOOLEAN DEFAULT FALSE,
+                    half_day_period      TEXT,
+                    reason               TEXT,
+                    status               TEXT DEFAULT 'pending',
+                    is_paid              BOOLEAN DEFAULT TRUE,
+                    deduction_percentage NUMERIC(5,2) DEFAULT 0,
+                    approved_by          INTEGER REFERENCES users(id),
+                    approved_at          TIMESTAMP,
+                    rejected_reason      TEXT,
+                    notes                TEXT,
+                    created_by           INTEGER REFERENCES users(id),
+                    created_at           TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS leave_settings (
+                    id                     SERIAL PRIMARY KEY,
+                    company_id             INTEGER REFERENCES companies(id) UNIQUE,
+                    enable_pro_rata        BOOLEAN DEFAULT TRUE,
+                    pro_rata_rounding      TEXT DEFAULT 'half',
+                    enable_carry_forward   BOOLEAN DEFAULT FALSE,
+                    max_carry_days         INTEGER DEFAULT 0,
+                    enable_encashment      BOOLEAN DEFAULT FALSE,
+                    approval_levels        INTEGER DEFAULT 1,
+                    auto_approve_days      INTEGER DEFAULT 0,
+                    enable_public_holidays BOOLEAN DEFAULT TRUE,
+                    enable_half_day        BOOLEAN DEFAULT TRUE,
+                    first_half_cutoff      TIME DEFAULT '13:00:00'
+                )
+            """)
+        conn.commit()
+        conn.close()
+        print(">>> migrate_db: leave tables OK")
+    except Exception as e:
+        print(f">>> migrate_db ERROR: {e}")
+        try:
+            conn.rollback()
+            conn.close()
+        except Exception:
+            pass
+
+    # ── Column migrations (each in own transaction) ──────────────────────────
+    columns = [
+        "ALTER TABLE companies ADD COLUMN IF NOT EXISTS logo_base64 TEXT",
+        "ALTER TABLE companies ADD COLUMN IF NOT EXISTS logo_url TEXT",
+        "ALTER TABLE employees ADD COLUMN IF NOT EXISTS department TEXT",
+        "ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS submitted_by INTEGER",
+        "ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMP",
+        "ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS approved_by INTEGER",
+        "ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP",
+        "ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS rejected_reason TEXT",
+        "ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMP",
+    ]
+    for sql in columns:
+        try:
+            conn = get_conn()
+            with conn.cursor() as cur:
+                cur.execute(sql)
+            conn.commit()
+            conn.close()
+        except Exception:
+            try:
+                conn.rollback()
+                conn.close()
+            except Exception:
+                pass
+
+
+# Run on startup
+init_db()
+migrate_db()
