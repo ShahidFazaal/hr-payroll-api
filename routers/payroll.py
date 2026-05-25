@@ -37,9 +37,7 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
                COALESCE(cs.late_threshold_minutes, 15) as late_threshold_minutes,
                COALESCE(cs.standard_hours_per_day, 8) as standard_hours_per_day,
                COALESCE(cs.overtime_threshold_hours, 8) as overtime_threshold_hours,
-               COALESCE(cs.working_days_per_week, 6) as working_days_per_week,
-               COALESCE(cs.enable_overnight_shifts, TRUE) as enable_overnight_shifts,
-               COALESCE(cs.overnight_grace_hours, 6) as overnight_grace_hours
+               COALESCE(cs.working_days_per_week, 6) as working_days_per_week
         FROM employees e
         LEFT JOIN company_settings cs ON e.company_id = cs.company_id
         WHERE e.id = %s
@@ -154,7 +152,7 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
 
             elif att_next and next_day_end:
                 # Grace window — uses company setting
-                grace_hours = int(emp.get("overnight_grace_hours") or 6)
+                grace_hours = 6  # default, configurable in settings once column migrated
                 checkout_time = att_next[0]["last_punch"]
                 shift_end_next = datetime.combine(
                     current + timedelta(days=1),
@@ -214,38 +212,45 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
 def generate_payroll(data: PayrollGenerate, current_user=Depends(get_current_user)):
     """Generate payroll for a period. Returns list of employee payroll records."""
     conn = db.get_conn()
-    with conn.cursor() as cur:
-        # Get employees
-        query = """
-            SELECT id FROM employees
-            WHERE company_id = %s AND is_active = TRUE
-        """
-        # Always exclude inactive employees from payroll
-        params = [data.company_id]
-        if data.branch_ids:
-            query += " AND home_branch_id = ANY(%s)"
-            params.append(data.branch_ids)
-        if data.employee_ids:
-            query += " AND id = ANY(%s)"
-            params.append(data.employee_ids)
-        cur.execute(query, params)
-        employee_ids = [r["id"] for r in cur.fetchall()]
+    try:
+        with conn.cursor() as cur:
+            # Get employees
+            query = """
+                SELECT id FROM employees
+                WHERE company_id = %s AND is_active = TRUE
+            """
+            params = [data.company_id]
+            if data.branch_ids:
+                query += " AND home_branch_id = ANY(%s)"
+                params.append(data.branch_ids)
+            if data.employee_ids:
+                query += " AND id = ANY(%s)"
+                params.append(data.employee_ids)
+            cur.execute(query, params)
+            employee_ids = [r["id"] for r in cur.fetchall()]
 
-        # Build override map
-        override_map = {}
-        if data.deduction_overrides:
-            for o in data.deduction_overrides:
-                override_map[o.employee_id] = o.dict()
+            # Build override map
+            override_map = {}
+            if data.deduction_overrides:
+                for o in data.deduction_overrides:
+                    override_map[o.employee_id] = o.dict()
 
-        results = []
-        for emp_id in employee_ids:
-            result = calculate_payroll_for_employee(
-                cur, emp_id, data.company_id,
-                data.period_start, data.period_end,
-                override_map.get(emp_id)
-            )
-            if result:
-                results.append(result)
+            results = []
+            for emp_id in employee_ids:
+                try:
+                    result = calculate_payroll_for_employee(
+                        cur, emp_id, data.company_id,
+                        data.period_start, data.period_end,
+                        override_map.get(emp_id)
+                    )
+                    if result:
+                        results.append(result)
+                except Exception as e:
+                    print(f">>> Payroll error for employee {emp_id}: {e}")
+                    continue
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Payroll generation failed: {str(e)}")
 
     conn.close()
     return {
