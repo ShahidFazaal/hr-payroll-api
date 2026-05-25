@@ -34,7 +34,8 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
     # Get employee details
     cur.execute("""
         SELECT e.*, cs.late_threshold_minutes, cs.standard_hours_per_day,
-               cs.overtime_threshold_hours, cs.working_days_per_week
+               cs.overtime_threshold_hours, cs.working_days_per_week,
+               cs.enable_overnight_shifts, cs.overnight_grace_hours
         FROM employees e
         JOIN company_settings cs ON e.company_id = cs.company_id
         WHERE e.id = %s
@@ -107,28 +108,57 @@ def calculate_payroll_for_employee(cur, employee_id, company_id,
                 current += timedelta(days=1)
                 continue
             working_days += 1
+            next_day_end = roster_day.get("next_day_end", False)
             att_day = attendance.get(date_str)
+
+            # For overnight shifts - also check next day's punches
+            next_date_str = str(current + timedelta(days=1))
+            att_next = attendance.get(next_date_str) if next_day_end else None
+
             if att_day:
                 present_days += 1
                 first_punch = att_day[0]["first_punch"]
-                last_punch = att_day[0]["last_punch"]
+
+                # Overnight: last punch could be from next day
+                if next_day_end and att_next:
+                    last_punch = att_next[0]["last_punch"]
+                else:
+                    last_punch = att_day[0]["last_punch"]
+
                 if first_punch and last_punch:
                     hours_worked = (last_punch - first_punch).total_seconds() / 3600
                     total_hours += hours_worked
                     if hours_worked > std_hours:
                         overtime_hours += hours_worked - std_hours
+
+                # Late check
                 if roster_day.get("shift_start") and first_punch:
-                    shift_start = datetime.combine(current,
-                                  datetime.strptime(str(roster_day["shift_start"]), "%H:%M:%S").time())
-                    late_mins = (first_punch - shift_start).total_seconds() / 60
+                    shift_start_dt = datetime.combine(current,
+                        datetime.strptime(str(roster_day["shift_start"]), "%H:%M:%S").time())
+                    late_mins = (first_punch - shift_start_dt).total_seconds() / 60
                     if late_mins > late_threshold:
                         late_count += 1
                         late_minutes += int(late_mins)
-                if roster_day.get("shift_end") and last_punch:
-                    shift_end = datetime.combine(current,
-                                datetime.strptime(str(roster_day["shift_end"]), "%H:%M:%S").time())
-                    if last_punch < shift_end - timedelta(minutes=15):
+
+                # Early departure (skip for overnight shifts)
+                if not next_day_end and roster_day.get("shift_end") and last_punch:
+                    shift_end_dt = datetime.combine(current,
+                        datetime.strptime(str(roster_day["shift_end"]), "%H:%M:%S").time())
+                    if last_punch < shift_end_dt - timedelta(minutes=15):
                         early_departure_count += 1
+
+            elif att_next and next_day_end:
+                # Grace window — uses company setting
+                grace_hours = int(emp.get("overnight_grace_hours") or 6)
+                checkout_time = att_next[0]["last_punch"]
+                shift_end_next = datetime.combine(
+                    current + timedelta(days=1),
+                    datetime.strptime(str(roster_day["shift_end"]), "%H:%M:%S").time()
+                ) if roster_day.get("shift_end") else None
+                if shift_end_next and checkout_time <= shift_end_next + timedelta(hours=grace_hours):
+                    present_days += 1
+                else:
+                    absent_days += 1
             else:
                 absent_days += 1
         current += timedelta(days=1)
