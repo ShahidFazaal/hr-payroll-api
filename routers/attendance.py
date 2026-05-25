@@ -159,15 +159,16 @@ def get_daily_summary(employee_id: int,
         late_threshold = emp["late_threshold_minutes"] or 15
         std_hours = float(emp["standard_hours_per_day"] or 8)
 
-        # Get roster for period
+        # Get roster for period (include one extra day for overnight)
         cur.execute("""
-            SELECT work_date::text, is_day_off, shift_start, shift_end
+            SELECT work_date::text, is_day_off, shift_start, shift_end,
+                   COALESCE(next_day_end, FALSE) as next_day_end
             FROM weekly_roster
             WHERE employee_id = %s AND work_date BETWEEN %s AND %s
         """, (employee_id, date_from, date_to))
         roster = {r["work_date"]: dict(r) for r in cur.fetchall()}
 
-        # Get all punches for period — group by date only (ignore punch_type)
+        # Get all punches (include one extra day for overnight checkouts)
         cur.execute("""
             SELECT DATE(punch_time)::text as punch_date,
                    MIN(punch_time) as first_punch,
@@ -175,10 +176,11 @@ def get_daily_summary(employee_id: int,
                    COUNT(*) as punch_count,
                    array_agg(punch_time ORDER BY punch_time) as all_punches
             FROM attendance_logs
-            WHERE employee_id = %s AND punch_time::date BETWEEN %s AND %s
+            WHERE employee_id = %s
+              AND punch_time::date BETWEEN %s AND (%s::date + interval '1 day')::date
             GROUP BY DATE(punch_time)
             ORDER BY DATE(punch_time)
-        """, (employee_id, date_from, date_to))
+        """, (employee_id, date_from, date_to, date_to))
         raw_punches = cur.fetchall()
 
         # Build punch map by date
@@ -255,6 +257,10 @@ def get_daily_summary(employee_id: int,
                     day_data["hours_worked"] = round(hours, 2)
 
             if roster_day:
+                next_day_end  = roster_day.get("next_day_end", False)
+                next_date_str = str(current + timedelta(days=1))
+                punch_next    = punches_by_date.get(next_date_str) if next_day_end else None
+
                 if roster_day["is_day_off"]:
                     day_data["status"] = "worked_on_day_off" if punch else "day_off"
                 else:
@@ -262,6 +268,13 @@ def get_daily_summary(employee_id: int,
                         day_data["status"] = "on_leave"
                         day_data["leave"]  = leave
                     elif punch:
+                        # Overnight: last punch is from next day
+                        if next_day_end and punch_next:
+                            day_data["check_out"]    = punch_next["last"].isoformat()
+                            day_data["overnight"]    = True
+                            if punch["first"] and punch_next["last"]:
+                                hours = (punch_next["last"] - punch["first"]).total_seconds() / 3600
+                                day_data["hours_worked"] = round(hours, 2)
                         if roster_day.get("shift_start") and punch["first"]:
                             shift_dt  = datetime.combine(current,
                                 datetime.strptime(str(roster_day["shift_start"]), "%H:%M:%S").time())
@@ -273,8 +286,8 @@ def get_daily_summary(employee_id: int,
                                 day_data["status"] = "present"
                         else:
                             day_data["status"] = "present"
-                        # Missing checkout
-                        if punch["count"] == 1:
+                        # Missing checkout (not for overnight)
+                        if not next_day_end and punch["count"] == 1:
                             day_data["missing_checkout"] = True
                             if day_data["status"] == "present":
                                 day_data["status"] = "missing_checkout"
