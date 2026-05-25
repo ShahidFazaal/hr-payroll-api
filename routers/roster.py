@@ -17,6 +17,7 @@ class RosterEntry(BaseModel):
     is_day_off: bool = False
     shift_start: Optional[str] = None
     shift_end: Optional[str] = None
+    next_day_end: bool = False
     notes: Optional[str] = None
 
 class RosterBulk(BaseModel):
@@ -59,16 +60,16 @@ def save_roster_bulk(data: RosterBulk, current_user=Depends(get_current_user)):
             cur.execute("""
                 INSERT INTO weekly_roster
                     (employee_id, branch_id, week_start_date, work_date,
-                     is_day_off, shift_start, shift_end, notes, created_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     is_day_off, shift_start, shift_end, next_day_end, notes, created_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (employee_id, work_date)
                 DO UPDATE SET branch_id=%s, is_day_off=%s,
-                    shift_start=%s, shift_end=%s, notes=%s
+                    shift_start=%s, shift_end=%s, next_day_end=%s, notes=%s
             """, (entry.employee_id, entry.branch_id, week_start, entry.work_date,
                   entry.is_day_off, entry.shift_start, entry.shift_end,
-                  entry.notes, current_user["user_id"],
+                  entry.next_day_end, entry.notes, current_user["user_id"],
                   entry.branch_id, entry.is_day_off,
-                  entry.shift_start, entry.shift_end, entry.notes))
+                  entry.shift_start, entry.shift_end, entry.next_day_end, entry.notes))
         conn.commit()
     conn.close()
     return {"message": f"Roster saved. {len(data.entries)} entries."}
