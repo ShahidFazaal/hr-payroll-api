@@ -180,10 +180,10 @@ def get_daily_summary(employee_id: int,
                    array_agg(punch_time ORDER BY punch_time) as all_punches
             FROM attendance_logs
             WHERE employee_id = %s
-              AND punch_time::date BETWEEN %s AND (%s::date + interval '1 day')::date
+              AND punch_time::date BETWEEN %s AND %s
             GROUP BY DATE(punch_time)
             ORDER BY DATE(punch_time)
-        """, (employee_id, date_from, date_to, date_to))
+        """, (employee_id, date_from, date_to))
         raw_punches = cur.fetchall()
 
         # Build punch map by date
