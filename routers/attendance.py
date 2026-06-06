@@ -169,7 +169,9 @@ def get_daily_summary(employee_id: int,
         for r in cur.fetchall():
             d = dict(r)
             d["next_day_end"] = d.get("next_day_end", False) or False
-            roster[r["work_date"]] = d
+            # Ensure key is always YYYY-MM-DD string
+            key = str(r["work_date"])[:10]
+            roster[key] = d
 
         # Get all punches (include one extra day for overnight checkouts)
         cur.execute("""
@@ -230,7 +232,7 @@ def get_daily_summary(employee_id: int,
         other_days  = []
         current = date_from
         while current <= date_to:
-            date_str  = str(current)
+            date_str  = str(current)[:10]
             roster_day = roster.get(date_str)
             punch      = punches_by_date.get(date_str)
             leave      = leave_map.get(date_str)
