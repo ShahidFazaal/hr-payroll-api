@@ -54,33 +54,47 @@ def get_roster(week_start: date, branch_id: Optional[int] = None,
 @router.post("/bulk")
 def save_roster_bulk(data: RosterBulk, current_user=Depends(get_current_user)):
     conn = db.get_conn()
+    saved = 0
     with conn.cursor() as cur:
         for entry in data.entries:
-            week_start = entry.work_date - timedelta(days=entry.work_date.weekday())
-            cur.execute("""
-                INSERT INTO weekly_roster
-                    (employee_id, branch_id, week_start_date, work_date,
-                     is_day_off, shift_start, shift_end, notes, created_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (employee_id, work_date)
-                DO UPDATE SET branch_id=%s, is_day_off=%s,
-                    shift_start=%s, shift_end=%s, notes=%s
-            """, (entry.employee_id, entry.branch_id, week_start, entry.work_date,
-                  entry.is_day_off, entry.shift_start, entry.shift_end,
-                  entry.notes, current_user["user_id"],
-                  entry.branch_id, entry.is_day_off,
-                  entry.shift_start, entry.shift_end, entry.notes))
-            # Update next_day_end separately (column may not exist yet)
             try:
+                cur.execute("SAVEPOINT roster_entry")
+                week_start = entry.work_date - timedelta(days=entry.work_date.weekday())
+                cur.execute("""
+                    INSERT INTO weekly_roster
+                        (employee_id, branch_id, week_start_date, work_date,
+                         is_day_off, shift_start, shift_end, notes, created_by)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (employee_id, work_date)
+                    DO UPDATE SET branch_id=%s, is_day_off=%s,
+                        shift_start=%s, shift_end=%s, notes=%s
+                """, (entry.employee_id, entry.branch_id, week_start, entry.work_date,
+                      entry.is_day_off, entry.shift_start, entry.shift_end,
+                      entry.notes, current_user["user_id"],
+                      entry.branch_id, entry.is_day_off,
+                      entry.shift_start, entry.shift_end, entry.notes))
+                cur.execute("RELEASE SAVEPOINT roster_entry")
+                saved += 1
+            except Exception as e:
+                cur.execute("ROLLBACK TO SAVEPOINT roster_entry")
+                print(f">>> Roster save error: {e}")
+                continue
+
+        # Try next_day_end updates separately
+        for entry in data.entries:
+            try:
+                cur.execute("SAVEPOINT next_day")
                 cur.execute("""
                     UPDATE weekly_roster SET next_day_end=%s
                     WHERE employee_id=%s AND work_date=%s
                 """, (entry.next_day_end, entry.employee_id, entry.work_date))
+                cur.execute("RELEASE SAVEPOINT next_day")
             except Exception:
-                pass
+                cur.execute("ROLLBACK TO SAVEPOINT next_day")
+
         conn.commit()
     conn.close()
-    return {"message": f"Roster saved. {len(data.entries)} entries."}
+    return {"message": f"Roster saved. {saved} entries."}
 
 @router.delete("/")
 def clear_roster(week_start: date, branch_id: int, current_user=Depends(get_current_user)):
