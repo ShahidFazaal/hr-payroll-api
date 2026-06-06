@@ -96,6 +96,21 @@ def save_roster_bulk(data: RosterBulk, current_user=Depends(get_current_user)):
     conn.close()
     return {"message": f"Roster saved. {saved} entries."}
 
+@router.delete("/entry")
+def delete_roster_entry(employee_id: int, work_date: date,
+                         current_user=Depends(get_current_user)):
+    """Delete a single roster entry."""
+    conn = db.get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            DELETE FROM weekly_roster
+            WHERE employee_id=%s AND work_date=%s
+        """, (employee_id, work_date))
+        conn.commit()
+    conn.close()
+    return {"message": "Roster entry deleted."}
+
+
 @router.delete("/")
 def clear_roster(week_start: date, branch_id: int, current_user=Depends(get_current_user)):
     conn = db.get_conn()
