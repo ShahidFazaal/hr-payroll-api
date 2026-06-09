@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import date, datetime, timedelta
+from collections import defaultdict
 import database as db
 from routers.auth import get_current_user
 
@@ -352,6 +353,20 @@ def export_attendance_data(
     result = []
 
     with conn.cursor() as cur:
+        # Safe day break fallback - column may not exist yet
+        GLOBAL_DAY_BREAK = 6
+        try:
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name='company_settings' AND column_name='day_break_hour'
+            """)
+            if cur.fetchone():
+                cur.execute("SELECT COALESCE(day_break_hour, 6) as dbh FROM company_settings WHERE company_id=%s", (company_id,))
+                dbh_row = cur.fetchone()
+                GLOBAL_DAY_BREAK = int(dbh_row["dbh"]) if dbh_row else 6
+        except Exception:
+            GLOBAL_DAY_BREAK = 6
+
         # Get employees
         query = """
             SELECT e.id, e.full_name, e.employee_code, e.device_user_id,
@@ -405,12 +420,7 @@ def export_attendance_data(
                 branch_names[b["id"]] = b["name"]
 
             # Day break time from company settings (default 06:00)
-            cur.execute("""
-                SELECT COALESCE(day_break_hour, 6) as day_break_hour
-                FROM company_settings WHERE company_id = %s
-            """, (company_id,))
-            cs_row = cur.fetchone()
-            DAY_BREAK_HOUR = int(cs_row["day_break_hour"]) if cs_row else 6
+            DAY_BREAK_HOUR = GLOBAL_DAY_BREAK
 
             # Apply day break rule: re-assign punches to correct work day
             # Work day = from DAY_BREAK_HOUR to next day DAY_BREAK_HOUR
@@ -420,7 +430,6 @@ def export_attendance_data(
                 return punch_time.date()
 
             # Group punches by work_date
-            from collections import defaultdict
             work_day_punches = defaultdict(list)
             for p in all_punches_raw:
                 wd = get_work_date(p["punch_time"])
