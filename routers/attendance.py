@@ -444,11 +444,17 @@ def export_attendance_data(
                 ps_sorted = sorted(ps, key=lambda x: x["time"])
                 first = ps_sorted[0]["time"]
                 last  = ps_sorted[-1]["time"]
+                # Check if any punch crossed midnight (before day break hour)
+                has_overnight = any(p["time"].hour < DAY_BREAK_HOUR for p in ps_sorted)
+                # Check if last punch is on next calendar day
+                crosses_midnight = last.date() > first.date()
                 punches[wd] = {
-                    "first_punch":    first,
-                    "last_punch":     last,
-                    "punch_count":    len(ps_sorted),
+                    "first_punch":     first,
+                    "last_punch":      last,
+                    "punch_count":     len(ps_sorted),
                     "punch_branch_id": ps_sorted[0]["branch_id"],
+                    "has_overnight":   has_overnight,
+                    "crosses_midnight": crosses_midnight,
                 }
 
             # Get approved leaves
@@ -535,12 +541,14 @@ def export_attendance_data(
                         hours = (last - first).total_seconds() / 3600
                         row["hours"] = round(hours, 2)
 
-                    # Flag overnight workers (checkin after day break — they started previous evening)
-                    if first and first.hour < DAY_BREAK_HOUR:
-                        comments.append("⚠ Overnight worker")
+                    # Flag overnight shifts
+                    if punch.get("crosses_midnight"):
+                        comments.append("⚠ Overnight shift — checkout past midnight")
+                    elif punch.get("has_overnight"):
+                        comments.append("⚠ Overnight punch detected")
 
                     if punch["punch_count"] == 1:
-                        comments.append("Missing checkout")
+                        comments.append("⚠ Missing checkout — only 1 punch")
                         row["check_out"] = ""
                         row["hours"] = ""
 
