@@ -331,6 +331,82 @@ def migrate_db():
         except Exception:
             pass
 
+    # ── New tables (each in own transaction) ────────────────────────────────
+    new_tables = [
+        """CREATE TABLE IF NOT EXISTS employee_documents (
+            id              SERIAL PRIMARY KEY,
+            employee_id     INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+            document_type   TEXT NOT NULL,
+            document_number TEXT,
+            issue_date      DATE,
+            expiry_date     DATE,
+            issuing_country TEXT,
+            notes           TEXT,
+            file_base64     TEXT,
+            file_name       TEXT,
+            status          TEXT DEFAULT 'active',
+            created_by      INTEGER,
+            created_at      TIMESTAMP DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS warning_templates (
+            id              SERIAL PRIMARY KEY,
+            company_id      INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+            name            TEXT NOT NULL,
+            violation_type  TEXT,
+            content_en      TEXT,
+            content_ar      TEXT,
+            is_default      BOOLEAN DEFAULT FALSE,
+            created_by      INTEGER,
+            created_at      TIMESTAMP DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS warning_letters (
+            id                  SERIAL PRIMARY KEY,
+            company_id          INTEGER REFERENCES companies(id),
+            employee_id         INTEGER REFERENCES employees(id),
+            template_id         INTEGER,
+            letter_type         TEXT NOT NULL,
+            violation_type      TEXT,
+            incident_date       DATE,
+            description         TEXT,
+            description_ar      TEXT,
+            deduction_amount    NUMERIC(10,2) DEFAULT 0,
+            deduction_applied   BOOLEAN DEFAULT FALSE,
+            deduction_month     TEXT,
+            issued_by           INTEGER,
+            sent_to_employee    BOOLEAN DEFAULT FALSE,
+            sent_at             TIMESTAMP,
+            status              TEXT DEFAULT 'draft',
+            created_at          TIMESTAMP DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS email_settings (
+            id              SERIAL PRIMARY KEY,
+            company_id      INTEGER REFERENCES companies(id) ON DELETE CASCADE UNIQUE,
+            provider        TEXT DEFAULT 'gmail',
+            sendgrid_key    TEXT,
+            gmail_user      TEXT,
+            gmail_password  TEXT,
+            from_name       TEXT,
+            from_email      TEXT,
+            alert_recipients TEXT DEFAULT '[]',
+            alert_days      TEXT DEFAULT '[90,60,30,7]',
+            created_at      TIMESTAMP DEFAULT NOW()
+        )""",
+    ]
+    for sql in new_tables:
+        try:
+            conn = get_conn()
+            with conn.cursor() as cur:
+                cur.execute(sql)
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f">>> Table migration note: {e}")
+            try:
+                conn.rollback()
+                conn.close()
+            except Exception:
+                pass
+
     # ── Column migrations (each in own transaction) ──────────────────────────
     columns = [
         "ALTER TABLE companies ADD COLUMN IF NOT EXISTS logo_base64 TEXT",
