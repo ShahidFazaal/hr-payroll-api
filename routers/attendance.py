@@ -385,12 +385,13 @@ def export_attendance_data(
             """, (emp_id, date_from, date_to))
             roster = {r["work_date"]: dict(r) for r in cur.fetchall()}
 
-            # Get punches grouped by date
+            # Get punches grouped by date - include actual branch from punch
             cur.execute("""
                 SELECT DATE(punch_time)::text as punch_date,
                        MIN(punch_time) as first_punch,
                        MAX(punch_time) as last_punch,
-                       COUNT(*) as punch_count
+                       COUNT(*) as punch_count,
+                       MODE() WITHIN GROUP (ORDER BY branch_id) as punch_branch_id
                 FROM attendance_logs
                 WHERE employee_id = %s
                   AND punch_time::date BETWEEN %s AND %s
@@ -398,6 +399,12 @@ def export_attendance_data(
                 ORDER BY DATE(punch_time)
             """, (emp_id, date_from, date_to))
             punches = {r["punch_date"]: dict(r) for r in cur.fetchall()}
+
+            # Get branch names for punch branches
+            branch_names = {}
+            cur.execute("SELECT id, name FROM branches")
+            for b in cur.fetchall():
+                branch_names[b["id"]] = b["name"]
 
             # Get approved leaves
             try:
@@ -443,7 +450,8 @@ def export_attendance_data(
                 row = {
                     "employee_name": emp["full_name"],
                     "employee_code": emp["employee_code"] or emp["device_user_id"] or "",
-                    "branch":        emp["branch_name"] or "",
+                    "branch":        branch_names.get(punch.get("punch_branch_id") if punch else None,
+                                     emp["branch_name"] or "") if punch else emp["branch_name"] or "",
                     "date":          ds,
                     "day":           day_name,
                     "roster":        "",
@@ -470,23 +478,56 @@ def export_attendance_data(
                 if punch:
                     first = punch["first_punch"]
                     last  = punch["last_punch"]
-                    ci    = first.strftime("%H:%M") if first else ""
-                    co    = last.strftime("%H:%M") if (last and last != first) else ""
-                    row["check_in"]  = ci
-                    row["check_out"] = co
 
-                    if first and last and last != first:
-                        hours = (last - first).total_seconds() / 3600
-                        row["hours"] = round(hours, 2)
-
-                    # Midnight punch comment
                     comments = []
-                    if first and first.hour < 6:
-                        comments.append("⚠ Midnight punch — possible overnight checkout")
-                    if punch["punch_count"] == 1:
-                        comments.append("Missing checkout")
-                        row["check_out"] = ""
+                    is_midnight_checkin = first and first.hour < 6
+
+                    # Check if this is an overnight checkout from previous day
+                    prev_date = str(date.fromisoformat(ds) - timedelta(days=1))
+                    prev_punch = punches.get(prev_date)
+                    is_prev_day_checkout = (
+                        is_midnight_checkin and
+                        prev_punch and
+                        prev_punch["first_punch"] and
+                        prev_punch["first_punch"].hour >= 6 and
+                        punch["punch_count"] == 1
+                    )
+
+                    if is_prev_day_checkout:
+                        # This is checkout from previous day - mark it
+                        ci = ""
+                        co = first.strftime("%H:%M")
+                        comments.append("⚠ Overnight checkout from previous day")
+                        row["check_in"]  = ci
+                        row["check_out"] = co
                         row["hours"] = ""
+                        # Also update previous day row if exists
+                        for prev_row in emp_rows:
+                            if prev_row.get("date") == prev_date and prev_row.get("check_out") == "":
+                                prev_row["check_out"] = co
+                                if prev_punch["first_punch"]:
+                                    h = (first - prev_punch["first_punch"]).total_seconds() / 3600
+                                    prev_row["hours"] = round(h, 2)
+                                prev_row["comment"] = (prev_row.get("comment", "") + " | ✓ Checkout linked from next day").strip(" | ")
+                                if "Missing checkout" in prev_row.get("comment", ""):
+                                    prev_row["comment"] = prev_row["comment"].replace("Missing checkout | ", "").replace("Missing checkout", "")
+                    else:
+                        ci = first.strftime("%H:%M") if first else ""
+                        co = last.strftime("%H:%M") if (last and last != first) else ""
+                        row["check_in"]  = ci
+                        row["check_out"] = co
+
+                        if first and last and last != first:
+                            hours = (last - first).total_seconds() / 3600
+                            row["hours"] = round(hours, 2)
+
+                        if is_midnight_checkin:
+                            comments.append("⚠ Midnight checkin")
+                        if punch["punch_count"] == 1:
+                            comments.append("Missing checkout")
+                            row["check_out"] = ""
+                            row["hours"] = ""
+
                     row["comment"] = " | ".join(comments)
 
                 # Determine status
