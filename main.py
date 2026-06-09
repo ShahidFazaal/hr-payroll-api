@@ -6,7 +6,7 @@ Developed by: Shahid Fazaal
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import database as db
-from routers import auth, companies, branches, users, employees, roster, attendance, payroll, settings, payroll_history, leave
+from routers import auth, companies, branches, users, employees, roster, attendance, payroll, settings, payroll_history, leave, documents, email_settings, warnings
 
 app = FastAPI(title="HR & Payroll System API")
 
