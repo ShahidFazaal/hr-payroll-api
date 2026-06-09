@@ -404,8 +404,13 @@ def export_attendance_data(
             for b in cur.fetchall():
                 branch_names[b["id"]] = b["name"]
 
-            # Day break time = 04:00 AM (punches before 04:00 belong to previous day)
-            DAY_BREAK_HOUR = 4
+            # Day break time from company settings (default 06:00)
+            cur.execute("""
+                SELECT COALESCE(day_break_hour, 6) as day_break_hour
+                FROM company_settings WHERE company_id = %s
+            """, (company_id,))
+            cs_row = cur.fetchone()
+            DAY_BREAK_HOUR = int(cs_row["day_break_hour"]) if cs_row else 6
 
             # Apply day break rule: re-assign punches to correct work day
             # Work day = from DAY_BREAK_HOUR to next day DAY_BREAK_HOUR
