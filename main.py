@@ -31,6 +31,9 @@ app.include_router(payroll.router,    prefix="/api/payroll",    tags=["Payroll"]
 app.include_router(settings.router,        prefix="/api/settings",        tags=["Settings"])
 app.include_router(payroll_history.router, prefix="/api/payroll-history", tags=["Payroll History"])
 app.include_router(leave.router,           prefix="/api/leave",            tags=["Leave Management"])
+app.include_router(documents.router,       prefix="/api/documents",        tags=["Documents"])
+app.include_router(email_settings.router,  prefix="/api/email-settings",   tags=["Email Settings"])
+app.include_router(warnings.router,        prefix="/api/warnings",         tags=["Warnings"])
 
 @app.on_event("startup")
 def startup():
