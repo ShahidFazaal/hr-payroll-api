@@ -4,7 +4,7 @@ attendance.py — Attendance router
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import database as db
 from routers.auth import get_current_user
 
