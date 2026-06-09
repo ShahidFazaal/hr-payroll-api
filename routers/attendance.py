@@ -489,28 +489,43 @@ def export_attendance_data(
                         is_midnight_checkin and
                         prev_punch and
                         prev_punch["first_punch"] and
-                        prev_punch["first_punch"].hour >= 6 and
-                        punch["punch_count"] == 1
+                        prev_punch["first_punch"].hour >= 6
+                        # No punch_count check — even if 2 punches, first at midnight = overnight
                     )
 
                     if is_prev_day_checkout:
-                        # This is checkout from previous day - mark it
-                        ci = ""
-                        co = first.strftime("%H:%M")
-                        comments.append("⚠ Overnight checkout from previous day")
-                        row["check_in"]  = ci
-                        row["check_out"] = co
-                        row["hours"] = ""
-                        # Also update previous day row if exists
+                        # First punch (midnight) = checkout from previous day
+                        # Remaining punches = this day's own activity
+                        overnight_checkout = first  # midnight punch = prev day checkout
+                        co = overnight_checkout.strftime("%H:%M")
+
+                        # Update previous day row
                         for prev_row in emp_rows:
-                            if prev_row.get("date") == prev_date and prev_row.get("check_out") == "":
+                            if prev_row.get("date") == prev_date:
                                 prev_row["check_out"] = co
                                 if prev_punch["first_punch"]:
-                                    h = (first - prev_punch["first_punch"]).total_seconds() / 3600
+                                    h = (overnight_checkout - prev_punch["first_punch"]).total_seconds() / 3600
                                     prev_row["hours"] = round(h, 2)
                                 prev_row["comment"] = (prev_row.get("comment", "") + " | ✓ Checkout linked from next day").strip(" | ")
-                                if "Missing checkout" in prev_row.get("comment", ""):
-                                    prev_row["comment"] = prev_row["comment"].replace("Missing checkout | ", "").replace("Missing checkout", "")
+                                prev_row["comment"] = prev_row["comment"].replace("Missing checkout | ", "").replace("Missing checkout", "").strip(" | ")
+
+                        # This day: if more punches exist after midnight one, use them
+                        if punch["punch_count"] >= 2 and last and last != first:
+                            # Has own checkin/checkout after the overnight checkout
+                            ci = last.strftime("%H:%M")  # last punch = own checkout
+                            # Find second punch (own checkin) - need all_punches
+                            row["check_in"]  = "—"  # no roster so hard to determine
+                            row["check_out"] = ci
+                            h = (last - first).total_seconds() / 3600
+                            row["hours"] = round(h, 2)
+                        else:
+                            row["check_in"]  = ""
+                            row["check_out"] = co
+                            row["hours"]     = ""
+
+                        comments.append("⚠ Midnight punch — overnight checkout linked to previous day")
+                        row["check_in"]  = ci if punch["punch_count"] >= 2 else ""
+                        row["check_out"] = last.strftime("%H:%M") if punch["punch_count"] >= 2 and last != first else co
                     else:
                         ci = first.strftime("%H:%M") if first else ""
                         co = last.strftime("%H:%M") if (last and last != first) else ""
