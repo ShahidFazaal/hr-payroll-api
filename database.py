@@ -435,6 +435,12 @@ def migrate_db():
         "ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS smtp_user TEXT",
         "ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS smtp_password TEXT",
         "ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS smtp_use_ssl BOOLEAN DEFAULT TRUE",
+        # Warning letters columns
+        "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS template_id INTEGER",
+        "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS description_ar TEXT",
+        "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS deduction_month TEXT",
+        "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS sent_to_employee BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP",
         # Document storage settings
         "ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS doc_storage_mode TEXT DEFAULT 'cloudinary'",
         "ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS cloudinary_cloud_name TEXT",
