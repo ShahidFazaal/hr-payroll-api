@@ -142,13 +142,22 @@ def create_document(data: DocumentCreate, current_user=Depends(get_current_user)
 
 
 @router.put("/{doc_id}")
-def update_document(doc_id: int, data: DocumentUpdate,
+def update_document(doc_id: int, data: dict,
                     current_user=Depends(get_current_user)):
     conn = db.get_conn()
     with conn.cursor() as cur:
-        fields = {k: v for k, v in data.dict().items() if v is not None}
+        # Filter only valid document fields
+        allowed = {"document_type","document_number","issue_date","expiry_date",
+                   "issuing_country","notes","status"}
+        fields = {k: v for k, v in data.items()
+                  if k in allowed and v != "" and v is not None}
+        # Allow empty string for nullable fields
+        for k in ["document_number","issuing_country","notes","expiry_date","issue_date"]:
+            if k in data and data[k] == "":
+                fields[k] = None
         if not fields:
-            raise HTTPException(status_code=400, detail="No fields to update.")
+            conn.close()
+            return {"message": "Nothing to update."}
         set_clause = ", ".join(f"{k}=%s" for k in fields)
         cur.execute(
             f"UPDATE employee_documents SET {set_clause} WHERE id=%s",
