@@ -464,6 +464,43 @@ def apply_deduction(warning_id: int, current_user=Depends(get_current_user)):
     return {"message": "Deduction marked as applied."}
 
 
+@router.get("/pending-deductions")
+def get_pending_deductions(company_id: int,
+                           current_user=Depends(get_current_user)):
+    """Get all warning letters with unapplied deductions."""
+    conn = db.get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT w.*, e.full_name, e.employee_code,
+                   b.name as branch_name
+            FROM warning_letters w
+            JOIN employees e ON w.employee_id = e.id
+            LEFT JOIN branches b ON e.home_branch_id = b.id
+            WHERE w.company_id = %s
+              AND w.deduction_amount > 0
+              AND (w.deduction_applied IS NULL OR w.deduction_applied = FALSE)
+            ORDER BY w.created_at DESC
+        """, (company_id,))
+        rows = cur.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@router.put("/{warning_id}/apply-deduction")
+def apply_deduction(warning_id: int, current_user=Depends(get_current_user)):
+    """Mark warning letter deduction as applied to payroll."""
+    conn = db.get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE warning_letters
+            SET deduction_applied = TRUE
+            WHERE id = %s
+        """, (warning_id,))
+        conn.commit()
+    conn.close()
+    return {"message": "Deduction marked as applied."}
+
+
 @router.put("/{warning_id}/acknowledge")
 def acknowledge_warning(warning_id: int, current_user=Depends(get_current_user)):
     """Mark warning letter as acknowledged by employee."""
