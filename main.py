@@ -37,7 +37,9 @@ app.include_router(warnings.router,        prefix="/api/warnings",         tags=
 
 @app.on_event("startup")
 def startup():
-    db.init_db()
+    import threading
+    # Run migration in background thread so port binds immediately
+    threading.Thread(target=db.init_db, daemon=True).start()
 
 @app.get("/health")
 def health():
