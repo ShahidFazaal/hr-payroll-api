@@ -449,6 +449,10 @@ def migrate_db():
         "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS sent_to_employee BOOLEAN DEFAULT FALSE",
         "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP",
         "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft'",
+        # Fix not-null constraints on warning_letters
+        "ALTER TABLE warning_letters ALTER COLUMN company_id DROP NOT NULL",
+        "ALTER TABLE warning_letters ALTER COLUMN employee_id DROP NOT NULL",
+        "ALTER TABLE warning_letters DROP COLUMN IF EXISTS issue_date",
         # Document storage settings
         "ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS doc_storage_mode TEXT DEFAULT 'cloudinary'",
         "ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS cloudinary_cloud_name TEXT",
