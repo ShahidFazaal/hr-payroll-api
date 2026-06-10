@@ -15,6 +15,11 @@ class EmailSettingsModel(BaseModel):
     sendgrid_key: Optional[str] = None
     gmail_user: Optional[str] = None
     gmail_password: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = 465
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_use_ssl: Optional[bool] = True
     from_name: Optional[str] = None
     from_email: Optional[str] = None
     alert_recipients: Optional[list] = []
@@ -26,10 +31,13 @@ class TestEmailModel(BaseModel):
 
 def send_email(settings: dict, to_email: str, subject: str, body: str) -> bool:
     """Send email using configured provider."""
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
     try:
         if settings.get("provider") == "sendgrid":
             import urllib.request
-            import urllib.parse
             payload = json.dumps({
                 "personalizations": [{"to": [{"email": to_email}]}],
                 "from": {"email": settings.get("from_email", "hr@company.com"),
@@ -49,9 +57,6 @@ def send_email(settings: dict, to_email: str, subject: str, body: str) -> bool:
             return True
 
         elif settings.get("provider") == "gmail":
-            import smtplib
-            from email.mime.multipart import MIMEMultipart
-            from email.mime.text import MIMEText
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"]    = f"{settings.get('from_name', 'HR')} <{settings['gmail_user']}>"
@@ -60,6 +65,32 @@ def send_email(settings: dict, to_email: str, subject: str, body: str) -> bool:
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
                 server.login(settings["gmail_user"], settings["gmail_password"])
                 server.sendmail(settings["gmail_user"], to_email, msg.as_string())
+            return True
+
+        elif settings.get("provider") == "smtp":
+            # Custom SMTP — works with cPanel, Outlook, Yahoo, any webmail
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"]    = f"{settings.get('from_name', 'HR')} <{settings.get('smtp_user', '')}>"
+            msg["To"]      = to_email
+            msg.attach(MIMEText(body, "html"))
+
+            host = settings.get("smtp_host", "")
+            port = int(settings.get("smtp_port") or 465)
+            user = settings.get("smtp_user", "")
+            pwd  = settings.get("smtp_password", "")
+            use_ssl = settings.get("smtp_use_ssl", True)
+
+            if use_ssl:
+                with smtplib.SMTP_SSL(host, port) as server:
+                    server.login(user, pwd)
+                    server.sendmail(user, to_email, msg.as_string())
+            else:
+                with smtplib.SMTP(host, port) as server:
+                    server.ehlo()
+                    server.starttls()
+                    server.login(user, pwd)
+                    server.sendmail(user, to_email, msg.as_string())
             return True
 
     except Exception as e:
@@ -97,26 +128,32 @@ def save_email_settings(company_id: int, data: EmailSettingsModel,
         cur.execute("""
             INSERT INTO email_settings
                 (company_id, provider, sendgrid_key, gmail_user, gmail_password,
+                 smtp_host, smtp_port, smtp_user, smtp_use_ssl,
                  from_name, from_email, alert_recipients, alert_days)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (company_id) DO UPDATE SET
                 provider=%s, sendgrid_key=%s,
+                smtp_host=%s, smtp_port=%s, smtp_user=%s, smtp_use_ssl=%s,
                 from_name=%s, from_email=%s,
                 alert_recipients=%s, alert_days=%s
         """, (
-            company_id, data.provider, data.sendgrid_key, data.gmail_user,
-            data.gmail_password, data.from_name, data.from_email,
+            company_id, data.provider, data.sendgrid_key,
+            data.gmail_user, data.gmail_password,
+            data.smtp_host, data.smtp_port, data.smtp_user, data.smtp_use_ssl,
+            data.from_name, data.from_email,
             json.dumps(data.alert_recipients), json.dumps(data.alert_days),
             data.provider, data.sendgrid_key,
+            data.smtp_host, data.smtp_port, data.smtp_user, data.smtp_use_ssl,
             data.from_name, data.from_email,
             json.dumps(data.alert_recipients), json.dumps(data.alert_days)
         ))
-        # Update password only if provided and not masked
+        # Update passwords only if not masked
         if data.gmail_password and data.gmail_password != "••••••••":
-            cur.execute(
-                "UPDATE email_settings SET gmail_password=%s WHERE company_id=%s",
-                (data.gmail_password, company_id)
-            )
+            cur.execute("UPDATE email_settings SET gmail_password=%s WHERE company_id=%s",
+                (data.gmail_password, company_id))
+        if data.smtp_password and data.smtp_password != "••••••••":
+            cur.execute("UPDATE email_settings SET smtp_password=%s WHERE company_id=%s",
+                (data.smtp_password, company_id))
         conn.commit()
     conn.close()
     return {"message": "Email settings saved."}
