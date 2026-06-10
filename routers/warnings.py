@@ -286,20 +286,34 @@ def get_warnings(
 ):
     conn = db.get_conn()
     with conn.cursor() as cur:
-        query = """
-            SELECT w.*, e.full_name, e.employee_code,
-                   b.name as branch_name,
-                   u.full_name as issued_by_name
-            FROM warning_letters w
-            JOIN employees e ON w.employee_id = e.id
-            LEFT JOIN branches b ON e.home_branch_id = b.id
-            LEFT JOIN users u ON w.issued_by = u.id
-            WHERE w.company_id = %s
-        """
-        params = [company_id]
-        if employee_id:
-            query += " AND w.employee_id = %s"
-            params.append(employee_id)
+        if employee_id and (not company_id or company_id == 0):
+            # Fetch by employee only
+            query = """
+                SELECT w.*, e.full_name, e.employee_code,
+                       b.name as branch_name,
+                       u.full_name as issued_by_name
+                FROM warning_letters w
+                JOIN employees e ON w.employee_id = e.id
+                LEFT JOIN branches b ON e.home_branch_id = b.id
+                LEFT JOIN users u ON w.issued_by = u.id
+                WHERE w.employee_id = %s
+            """
+            params = [employee_id]
+        else:
+            query = """
+                SELECT w.*, e.full_name, e.employee_code,
+                       b.name as branch_name,
+                       u.full_name as issued_by_name
+                FROM warning_letters w
+                JOIN employees e ON w.employee_id = e.id
+                LEFT JOIN branches b ON e.home_branch_id = b.id
+                LEFT JOIN users u ON w.issued_by = u.id
+                WHERE w.company_id = %s
+            """
+            params = [company_id]
+            if employee_id:
+                query += " AND w.employee_id = %s"
+                params.append(employee_id)
         query += " ORDER BY w.created_at DESC"
         cur.execute(query, params)
         warnings = cur.fetchall()
