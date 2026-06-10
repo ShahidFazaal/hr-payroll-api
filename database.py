@@ -426,6 +426,15 @@ def migrate_db():
         "ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP",
         "ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS rejected_reason TEXT",
         "ALTER TABLE payroll_records ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMP",
+        "ALTER TABLE weekly_roster ADD COLUMN IF NOT EXISTS next_day_end BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS enable_overnight_shifts BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS overnight_grace_hours INTEGER DEFAULT 6",
+        "ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS day_break_hour INTEGER DEFAULT 6",
+        "ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS smtp_host TEXT",
+        "ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS smtp_port INTEGER DEFAULT 465",
+        "ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS smtp_user TEXT",
+        "ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS smtp_password TEXT",
+        "ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS smtp_use_ssl BOOLEAN DEFAULT TRUE",
     ]
     for sql in columns:
         try:
