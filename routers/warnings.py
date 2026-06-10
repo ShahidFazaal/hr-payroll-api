@@ -464,6 +464,21 @@ def apply_deduction(warning_id: int, current_user=Depends(get_current_user)):
     return {"message": "Deduction marked as applied."}
 
 
+@router.put("/{warning_id}/acknowledge")
+def acknowledge_warning(warning_id: int, current_user=Depends(get_current_user)):
+    """Mark warning letter as acknowledged by employee."""
+    conn = db.get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE warning_letters
+            SET status='acknowledged'
+            WHERE id=%s
+        """, (warning_id,))
+        conn.commit()
+    conn.close()
+    return {"message": "Warning letter acknowledged."}
+
+
 @router.delete("/{warning_id}")
 def delete_warning(warning_id: int, current_user=Depends(get_current_user)):
     conn = db.get_conn()
