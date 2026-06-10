@@ -195,6 +195,39 @@ async def upload_document(
     }
 
 
+@router.post("/test-cloudinary/{company_id}")
+def test_cloudinary(company_id: int, current_user=Depends(get_current_user)):
+    """Test Cloudinary connection with saved credentials."""
+    settings = get_storage_settings(company_id)
+    cloud_name = settings.get("cloudinary_cloud_name", "")
+    api_key    = settings.get("cloudinary_api_key", "")
+    api_secret = settings.get("cloudinary_api_secret", "")
+
+    if not all([cloud_name, api_key, api_secret]):
+        raise HTTPException(status_code=400,
+            detail="Cloudinary credentials not configured. Please save settings first.")
+
+    try:
+        import hashlib, time
+        timestamp = str(int(time.time()))
+        sign_str  = f"timestamp={timestamp}{api_secret}"
+        signature = hashlib.sha1(sign_str.encode()).hexdigest()
+
+        url = f"https://api.cloudinary.com/v1_1/{cloud_name}/resources/image"
+        req = urllib.request.Request(url, method="GET")
+        # Basic auth
+        import base64 as b64
+        creds = b64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
+        req.add_header("Authorization", f"Basic {creds}")
+
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+        return {"message": f"✅ Cloudinary connected successfully! Cloud: {cloud_name}"}
+    except Exception as e:
+        raise HTTPException(status_code=500,
+            detail=f"Connection failed: {str(e)}")
+
+
 @router.delete("/document/{doc_id}/file")
 def delete_document_file(doc_id: int, current_user=Depends(get_current_user)):
     """Remove file from a document record."""
