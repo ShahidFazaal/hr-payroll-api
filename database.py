@@ -331,7 +331,7 @@ def migrate_db():
         except Exception:
             pass
 
-    # ── New tables (each in own transaction) ────────────────────────────────
+    # ── New tables (fast, non-blocking) ─────────────────────────────────────
     new_tables = [
         """CREATE TABLE IF NOT EXISTS employee_documents (
             id              SERIAL PRIMARY KEY,
@@ -392,20 +392,28 @@ def migrate_db():
             created_at      TIMESTAMP DEFAULT NOW()
         )""",
     ]
-    for sql in new_tables:
+    # Run all new tables in one connection
+    try:
+        conn = get_conn()
+        with conn.cursor() as cur:
+            for sql in new_tables:
+                try:
+                    cur.execute("SAVEPOINT new_table")
+                    cur.execute(sql)
+                    cur.execute("RELEASE SAVEPOINT new_table")
+                except Exception as e:
+                    cur.execute("ROLLBACK TO SAVEPOINT new_table")
+                    print(f">>> Table note: {e}")
+        conn.commit()
+        conn.close()
+        print(">>> migrate_db: new tables OK")
+    except Exception as e:
+        print(f">>> migrate_db: new tables error: {e}")
         try:
-            conn = get_conn()
-            with conn.cursor() as cur:
-                cur.execute(sql)
-            conn.commit()
+            conn.rollback()
             conn.close()
-        except Exception as e:
-            print(f">>> Table migration note: {e}")
-            try:
-                conn.rollback()
-                conn.close()
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     # ── Column migrations (each in own transaction) ──────────────────────────
     columns = [
