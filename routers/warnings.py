@@ -324,7 +324,8 @@ def get_warnings(
 @router.post("/")
 def create_warning(data: WarningCreate, current_user=Depends(get_current_user)):
     conn = db.get_conn()
-    with conn.cursor() as cur:
+    try:
+     with conn.cursor() as cur:
         # Get employee info
         cur.execute("""
             SELECT e.*, b.name as branch_name, c.name as company_name
@@ -410,6 +411,11 @@ A deduction of AED {data.deduction_amount:,.2f} will be applied to your salary f
                         f"Warning Letter — {data.letter_type}", body)
 
         conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Failed to create warning: {str(e)}")
 
     conn.close()
     return {
