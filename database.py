@@ -435,6 +435,16 @@ def migrate_db():
         "ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS smtp_user TEXT",
         "ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS smtp_password TEXT",
         "ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS smtp_use_ssl BOOLEAN DEFAULT TRUE",
+        # Document storage settings
+        "ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS doc_storage_mode TEXT DEFAULT 'cloudinary'",
+        "ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS cloudinary_cloud_name TEXT",
+        "ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS cloudinary_api_key TEXT",
+        "ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS cloudinary_api_secret TEXT",
+        # Document file storage
+        "ALTER TABLE employee_documents ADD COLUMN IF NOT EXISTS file_url TEXT",
+        "ALTER TABLE employee_documents ADD COLUMN IF NOT EXISTS file_public_id TEXT",
+        "ALTER TABLE employee_documents ADD COLUMN IF NOT EXISTS file_size INTEGER",
+        "ALTER TABLE employee_documents ADD COLUMN IF NOT EXISTS storage_type TEXT",
     ]
     for sql in columns:
         try:
