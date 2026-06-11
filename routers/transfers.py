@@ -83,6 +83,7 @@ def get_pending_notifications(branch_id: int, current_user=Depends(get_current_u
             LEFT JOIN users u ON t.transferred_by = u.id
             WHERE (t.from_branch_id = %s OR t.to_branch_id = %s)
               AND t.status IN ('pending', 'confirmed', 'active')
+              AND t.effective_date >= CURRENT_DATE
             ORDER BY t.effective_date ASC
         """, (branch_id, branch_id))
         rows = cur.fetchall()
