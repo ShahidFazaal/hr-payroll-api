@@ -193,6 +193,34 @@ def export_roster_excel(week_start: date, branch_id: int,
     return {"week_start": str(week_start), "days": days, "rows": rows}
 
 
+def parse_time(val) -> str:
+    """Convert Excel time value to HH:MM string."""
+    if not val:
+        return None
+    val_str = str(val).strip().rstrip('+').strip()
+    # Already in HH:MM format
+    if ':' in val_str:
+        parts = val_str.split(':')
+        return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    # Excel decimal fraction (e.g. 0.427 = 10:15)
+    try:
+        frac = float(val_str)
+        if 0 <= frac < 1:
+            total_minutes = round(frac * 24 * 60)
+            hours   = total_minutes // 60
+            minutes = total_minutes % 60
+            return f"{hours:02d}:{minutes:02d}"
+        # Large number like 37600 = seconds since midnight
+        if frac > 1:
+            total_minutes = round(frac * 24 * 60) % (24 * 60)
+            hours   = total_minutes // 60
+            minutes = total_minutes % 60
+            return f"{hours:02d}:{minutes:02d}"
+    except Exception:
+        pass
+    return None
+
+
 @router.post("/import-excel")
 def import_roster_excel(data: dict, current_user=Depends(get_current_user)):
     """
@@ -219,14 +247,13 @@ def import_roster_excel(data: dict, current_user=Depends(get_current_user)):
             if not emp_code:
                 continue
 
-            # Find employee by code or device_user_id
+            # Find employee by code or device_user_id (search across company, not just branch)
             cur.execute("""
                 SELECT id FROM employees
                 WHERE (employee_code = %s OR device_user_id = %s)
-                  AND home_branch_id = %s
                   AND is_active IS NOT FALSE
                 LIMIT 1
-            """, (emp_code, emp_code, branch_id))
+            """, (emp_code, emp_code))
             emp = cur.fetchone()
 
             if not emp:
