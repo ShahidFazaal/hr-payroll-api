@@ -23,6 +23,41 @@ class RosterEntry(BaseModel):
 class RosterBulk(BaseModel):
     entries: List[RosterEntry]
 
+
+def parse_time(val) -> Optional[str]:
+    """Convert any time value (HH:MM string or Excel decimal) to HH:MM string."""
+    if val is None or val == '' or val is False:
+        return None
+    raw = str(val).strip()
+    overnight = raw.endswith('+')
+    raw = raw.rstrip('+').strip()
+    if not raw:
+        return None
+    # Already HH:MM format
+    if ':' in raw:
+        parts = raw.split(':')
+        try:
+            result = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+            return result + ('+' if overnight else '')
+        except Exception:
+            return None
+    # Excel decimal fraction e.g. 0.427 = 10:15
+    try:
+        frac = float(raw)
+        if 0 <= frac < 1:
+            total_min = round(frac * 24 * 60)
+            h, m = divmod(total_min, 60)
+            return f"{h:02d}:{m:02d}" + ('+' if overnight else '')
+        # Sometimes Excel gives seconds or large floats
+        if frac >= 1:
+            total_min = round(frac * 24 * 60) % (24 * 60)
+            h, m = divmod(total_min, 60)
+            return f"{h:02d}:{m:02d}" + ('+' if overnight else '')
+    except Exception:
+        pass
+    return None
+
+
 @router.get("/")
 def get_roster(week_start: date, branch_id: Optional[int] = None,
                company_id: Optional[int] = None, current_user=Depends(get_current_user)):
@@ -50,6 +85,7 @@ def get_roster(week_start: date, branch_id: Optional[int] = None,
         rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
+
 
 @router.post("/bulk")
 def save_roster_bulk(data: RosterBulk, current_user=Depends(get_current_user)):
@@ -80,7 +116,6 @@ def save_roster_bulk(data: RosterBulk, current_user=Depends(get_current_user)):
                 print(f">>> Roster save error: {e}")
                 continue
 
-        # Try next_day_end updates separately
         for entry in data.entries:
             try:
                 cur.execute("SAVEPOINT next_day")
@@ -96,16 +131,14 @@ def save_roster_bulk(data: RosterBulk, current_user=Depends(get_current_user)):
     conn.close()
     return {"message": f"Roster saved. {saved} entries."}
 
+
 @router.delete("/entry")
 def delete_roster_entry(employee_id: int, work_date: date,
                          current_user=Depends(get_current_user)):
-    """Delete a single roster entry."""
     conn = db.get_conn()
     with conn.cursor() as cur:
-        cur.execute("""
-            DELETE FROM weekly_roster
-            WHERE employee_id=%s AND work_date=%s
-        """, (employee_id, work_date))
+        cur.execute("DELETE FROM weekly_roster WHERE employee_id=%s AND work_date=%s",
+                    (employee_id, work_date))
         conn.commit()
     conn.close()
     return {"message": "Roster entry deleted."}
@@ -115,10 +148,8 @@ def delete_roster_entry(employee_id: int, work_date: date,
 def clear_roster(week_start: date, branch_id: int, current_user=Depends(get_current_user)):
     conn = db.get_conn()
     with conn.cursor() as cur:
-        cur.execute("""
-            DELETE FROM weekly_roster
-            WHERE week_start_date = %s AND branch_id = %s
-        """, (week_start, branch_id))
+        cur.execute("DELETE FROM weekly_roster WHERE week_start_date=%s AND branch_id=%s",
+                    (week_start, branch_id))
         conn.commit()
     conn.close()
     return {"message": "Roster cleared."}
@@ -128,11 +159,8 @@ def clear_roster(week_start: date, branch_id: int, current_user=Depends(get_curr
 def export_roster_excel(week_start: date, branch_id: int,
                          current_user=Depends(get_current_user)):
     """Export roster as Excel-friendly JSON for frontend to convert."""
-    from datetime import timedelta
-
     conn = db.get_conn()
     with conn.cursor() as cur:
-        # Get all active employees for this branch
         cur.execute("""
             SELECT e.id, e.full_name, e.employee_code, e.device_user_id
             FROM employees e
@@ -141,48 +169,42 @@ def export_roster_excel(week_start: date, branch_id: int,
         """, (branch_id,))
         employees = cur.fetchall()
 
-        # Get existing roster for this week
         cur.execute("""
             SELECT r.employee_id, r.work_date::text, r.is_day_off,
-                   r.shift_start::text, r.shift_end::text
+                   r.shift_start::text, r.shift_end::text, r.next_day_end
             FROM weekly_roster r
             WHERE r.branch_id = %s AND r.week_start_date = %s
         """, (branch_id, week_start))
         roster_rows = cur.fetchall()
 
-        # Build roster map
         roster_map = {}
         for r in roster_rows:
             key = f"{r['employee_id']}_{r['work_date']}"
             roster_map[key] = r
 
-        # Build week dates
-        days = []
-        for i in range(7):
-            days.append(str(week_start + timedelta(days=i)))
+        days = [str(week_start + timedelta(days=i)) for i in range(7)]
 
-        # Build export rows
         rows = []
         for emp in employees:
             row = {
                 "employee_code": emp["employee_code"] or emp["device_user_id"] or str(emp["id"]),
                 "employee_name": emp["full_name"],
-                "employee_id": emp["id"],
+                "employee_id":   emp["id"],
             }
             for day in days:
                 key = f"{emp['id']}_{day}"
                 r = roster_map.get(key)
                 if r is None:
-                    row[f"{day}_status"] = ""        # blank = not yet scheduled
+                    row[f"{day}_status"] = ""
                 elif r["is_day_off"]:
                     row[f"{day}_status"] = "Day Off"
                 else:
                     row[f"{day}_status"] = "Working"
-                # Overnight: if end < start, add + to indicate next day
                 if r and r["shift_start"] and r["shift_end"]:
-                    start_str = r["shift_start"][:5]
-                    end_str   = r["shift_end"][:5]
-                    row[f"{day}_start"] = start_str
+                    end_str = r["shift_end"][:5]
+                    if r.get("next_day_end"):
+                        end_str += "+"
+                    row[f"{day}_start"] = r["shift_start"][:5]
                     row[f"{day}_end"]   = end_str
                 else:
                     row[f"{day}_start"] = ""
@@ -193,43 +215,9 @@ def export_roster_excel(week_start: date, branch_id: int,
     return {"week_start": str(week_start), "days": days, "rows": rows}
 
 
-def parse_time(val) -> str:
-    """Convert Excel time value to HH:MM string."""
-    if not val:
-        return None
-    val_str = str(val).strip().rstrip('+').strip()
-    # Already in HH:MM format
-    if ':' in val_str:
-        parts = val_str.split(':')
-        return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
-    # Excel decimal fraction (e.g. 0.427 = 10:15)
-    try:
-        frac = float(val_str)
-        if 0 <= frac < 1:
-            total_minutes = round(frac * 24 * 60)
-            hours   = total_minutes // 60
-            minutes = total_minutes % 60
-            return f"{hours:02d}:{minutes:02d}"
-        # Large number like 37600 = seconds since midnight
-        if frac > 1:
-            total_minutes = round(frac * 24 * 60) % (24 * 60)
-            hours   = total_minutes // 60
-            minutes = total_minutes % 60
-            return f"{hours:02d}:{minutes:02d}"
-    except Exception:
-        pass
-    return None
-
-
 @router.post("/import-excel")
 def import_roster_excel(data: dict, current_user=Depends(get_current_user)):
-    """
-    Import roster from Excel data.
-    Expects: { branch_id, week_start, rows: [{employee_code, day_status, day_start, day_end}] }
-    Matches employees by employee_code or device_user_id.
-    """
-    from datetime import timedelta
-
+    """Import roster from Excel. Handles decimal time values from Excel."""
     branch_id  = data.get("branch_id")
     week_start = data.get("week_start")
     rows       = data.get("rows", [])
@@ -238,7 +226,7 @@ def import_roster_excel(data: dict, current_user=Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="branch_id and week_start required.")
 
     conn = db.get_conn()
-    saved = 0
+    saved  = 0
     errors = []
 
     with conn.cursor() as cur:
@@ -247,7 +235,7 @@ def import_roster_excel(data: dict, current_user=Depends(get_current_user)):
             if not emp_code:
                 continue
 
-            # Find employee by code or device_user_id (search across company, not just branch)
+            # Find employee across whole company (not restricted to home_branch)
             cur.execute("""
                 SELECT id FROM employees
                 WHERE (employee_code = %s OR device_user_id = %s)
@@ -257,40 +245,58 @@ def import_roster_excel(data: dict, current_user=Depends(get_current_user)):
             emp = cur.fetchone()
 
             if not emp:
-                errors.append(f"Employee code '{emp_code}' not found in this branch.")
+                errors.append(f"Employee code '{emp_code}' not found.")
                 continue
 
             emp_id = emp["id"]
 
-            # Process each day
-            for day_str, status in row.get("days", {}).items():
+            for day_str, entry in row.get("days", {}).items():
                 try:
-                    work_date  = date.fromisoformat(day_str)
-                    week_dt    = work_date - timedelta(days=work_date.weekday())
-                    is_day_off = str(status.get("status", "Working")).strip().lower() in ("day off", "dayoff", "off")
-                    shift_start = status.get("start") or None
-                    shift_end   = status.get("end") or None
+                    work_date = date.fromisoformat(day_str)
+                    week_dt   = work_date - timedelta(days=work_date.weekday())
 
-                    cur.execute("""
-                        INSERT INTO weekly_roster
-                            (employee_id, branch_id, week_start_date, work_date,
-                             is_day_off, shift_start, shift_end, created_by)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                        ON CONFLICT (employee_id, work_date)
-                        DO UPDATE SET
-                            is_day_off=%s, shift_start=%s, shift_end=%s
-                    """, (emp_id, branch_id, str(week_dt), day_str,
-                          is_day_off, shift_start, shift_end, current_user["user_id"],
-                          is_day_off, shift_start, shift_end))
-                    saved += 1
-                except Exception as e:
-                    errors.append(f"Error on {emp_code} {day_str}: {str(e)}")
+                    status_val   = str(entry.get("status", "") or "").strip()
+                    status_lower = status_val.lower()
+                    is_day_off   = status_lower in ("day off", "dayoff", "off", "holiday")
+
+                    # Convert Excel decimal times to HH:MM
+                    raw_end      = entry.get("end", "") or ""
+                    next_day_end = str(raw_end).strip().endswith("+")
+                    shift_start  = parse_time(entry.get("start", ""))
+                    shift_end    = parse_time(raw_end)
+                    # Strip + from shift_end before storing
+                    if shift_end and shift_end.endswith("+"):
+                        shift_end = shift_end[:-1]
+
+                    try:
+                        cur.execute("SAVEPOINT rentry")
+                        cur.execute("""
+                            INSERT INTO weekly_roster
+                                (employee_id, branch_id, work_date, week_start_date,
+                                 is_day_off, shift_start, shift_end, next_day_end, created_by)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            ON CONFLICT (employee_id, work_date) DO UPDATE SET
+                                is_day_off=%s, shift_start=%s, shift_end=%s,
+                                next_day_end=%s, branch_id=%s, week_start_date=%s
+                        """, (emp_id, branch_id, work_date, week_dt,
+                              is_day_off, shift_start, shift_end, next_day_end,
+                              current_user["user_id"],
+                              is_day_off, shift_start, shift_end,
+                              next_day_end, branch_id, week_dt))
+                        cur.execute("RELEASE SAVEPOINT rentry")
+                        saved += 1
+                    except Exception as ex:
+                        cur.execute("ROLLBACK TO SAVEPOINT rentry")
+                        errors.append(f"Error on {emp_code} {day_str}: {str(ex)}")
+
+                except Exception as ex:
+                    errors.append(f"Error on {emp_code} {day_str}: {str(ex)}")
 
         conn.commit()
     conn.close()
 
     return {
         "message": f"Imported {saved} roster entries.",
-        "saved": saved,
-        "errors": errors,
+        "saved":   saved,
+        "errors":  errors,
     }
