@@ -254,16 +254,46 @@ def complete_transfer(transfer_id: int, current_user=Depends(get_current_user)):
     return {"message": "Transfer completed."}
 
 
+@router.put("/{transfer_id}")
+def update_transfer(transfer_id: int, data: TransferCreate,
+                    current_user=Depends(get_current_user)):
+    """Update a pending/confirmed transfer."""
+    conn = db.get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE employee_transfers SET
+                from_branch_id=%s, to_branch_id=%s, transfer_type=%s,
+                reason_code=%s, reason_notes=%s, effective_date=%s, return_date=%s
+            WHERE id=%s AND status IN ('pending','confirmed')
+        """, (data.from_branch_id, data.to_branch_id, data.transfer_type,
+              data.reason_code, data.reason_notes, data.effective_date,
+              data.return_date, transfer_id))
+        conn.commit()
+    conn.close()
+    return {"message": "Transfer updated."}
+
+
 @router.delete("/{transfer_id}")
 def cancel_transfer(transfer_id: int, current_user=Depends(get_current_user)):
     conn = db.get_conn()
     with conn.cursor() as cur:
-        cur.execute("""
-            UPDATE employee_transfers SET status='cancelled' WHERE id=%s
-        """, (transfer_id,))
+        cur.execute("UPDATE employee_transfers SET status='cancelled' WHERE id=%s",
+                    (transfer_id,))
         conn.commit()
     conn.close()
     return {"message": "Transfer cancelled."}
+
+
+@router.delete("/{transfer_id}/permanent")
+def delete_transfer(transfer_id: int, current_user=Depends(get_current_user)):
+    """Permanently delete a cancelled transfer record."""
+    conn = db.get_conn()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM employee_transfers WHERE id=%s AND status='cancelled'",
+                    (transfer_id,))
+        conn.commit()
+    conn.close()
+    return {"message": "Transfer deleted."}
 
 
 @router.get("/upcoming-returns")
