@@ -277,11 +277,17 @@ def update_transfer(transfer_id: int, data: TransferCreate,
 def cancel_transfer(transfer_id: int, current_user=Depends(get_current_user)):
     conn = db.get_conn()
     with conn.cursor() as cur:
+        # If active, revert employee branch back
+        cur.execute("SELECT * FROM employee_transfers WHERE id=%s", (transfer_id,))
+        t = cur.fetchone()
+        if t and t["status"] == "active":
+            cur.execute("UPDATE employees SET home_branch_id=%s WHERE id=%s",
+                        (t["from_branch_id"], t["employee_id"]))
         cur.execute("UPDATE employee_transfers SET status='cancelled' WHERE id=%s",
                     (transfer_id,))
         conn.commit()
     conn.close()
-    return {"message": "Transfer cancelled."}
+    return {"message": "Transfer cancelled. Employee branch reverted."}
 
 
 @router.delete("/{transfer_id}/permanent")
