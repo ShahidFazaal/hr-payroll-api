@@ -172,9 +172,21 @@ def export_roster_excel(week_start: date, branch_id: int,
             for day in days:
                 key = f"{emp['id']}_{day}"
                 r = roster_map.get(key)
-                row[f"{day}_status"] = "Day Off" if (r and r["is_day_off"]) else "Working"
-                row[f"{day}_start"]  = r["shift_start"][:5] if (r and r["shift_start"]) else ""
-                row[f"{day}_end"]    = r["shift_end"][:5] if (r and r["shift_end"]) else ""
+                if r is None:
+                    row[f"{day}_status"] = ""        # blank = not yet scheduled
+                elif r["is_day_off"]:
+                    row[f"{day}_status"] = "Day Off"
+                else:
+                    row[f"{day}_status"] = "Working"
+                # Overnight: if end < start, add + to indicate next day
+                if r and r["shift_start"] and r["shift_end"]:
+                    start_str = r["shift_start"][:5]
+                    end_str   = r["shift_end"][:5]
+                    row[f"{day}_start"] = start_str
+                    row[f"{day}_end"]   = end_str
+                else:
+                    row[f"{day}_start"] = ""
+                    row[f"{day}_end"]   = ""
             rows.append(row)
 
     conn.close()
