@@ -58,6 +58,34 @@ def parse_time(val) -> Optional[str]:
     return None
 
 
+@router.get("/transfer-employees")
+def get_transfer_employees(week_start: date, branch_id: int,
+                            current_user=Depends(get_current_user)):
+    """Get employees transferring to/from a branch within a given week."""
+    week_end = week_start + timedelta(days=6)
+    conn = db.get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT e.id as employee_id, e.full_name, e.employee_code,
+                   t.effective_date, t.transfer_type,
+                   t.from_branch_id, t.to_branch_id,
+                   fb.name as from_branch_name,
+                   tb.name as to_branch_name,
+                   CASE WHEN t.to_branch_id = %s THEN 'incoming' ELSE 'outgoing' END as direction
+            FROM employee_transfers t
+            JOIN employees e ON t.employee_id = e.id
+            JOIN branches fb ON t.from_branch_id = fb.id
+            JOIN branches tb ON t.to_branch_id = tb.id
+            WHERE (t.to_branch_id = %s OR t.from_branch_id = %s)
+              AND t.status IN ('pending','confirmed','active')
+              AND t.effective_date BETWEEN %s AND %s
+              AND e.is_active IS NOT FALSE
+        """, (branch_id, branch_id, branch_id, week_start, week_end))
+        rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
 @router.get("/")
 def get_roster(week_start: date, branch_id: Optional[int] = None,
                company_id: Optional[int] = None, current_user=Depends(get_current_user)):
@@ -161,13 +189,42 @@ def export_roster_excel(week_start: date, branch_id: int,
     """Export roster as Excel-friendly JSON for frontend to convert."""
     conn = db.get_conn()
     with conn.cursor() as cur:
+        # Get regular branch employees
         cur.execute("""
-            SELECT e.id, e.full_name, e.employee_code, e.device_user_id
+            SELECT e.id, e.full_name, e.employee_code, e.device_user_id,
+                   FALSE as is_transfer
             FROM employees e
             WHERE e.home_branch_id = %s AND e.is_active IS NOT FALSE
-            ORDER BY e.full_name
         """, (branch_id,))
-        employees = cur.fetchall()
+        employees = list(cur.fetchall())
+
+        # Get employees transferring TO this branch
+        # whose effective date falls within the roster week
+        week_end = str(week_start + timedelta(days=6))
+        cur.execute("""
+            SELECT e.id, e.full_name, e.employee_code, e.device_user_id,
+                   TRUE as is_transfer,
+                   t.effective_date, t.from_branch_id,
+                   fb.name as from_branch_name
+            FROM employee_transfers t
+            JOIN employees e ON t.employee_id = e.id
+            JOIN branches fb ON t.from_branch_id = fb.id
+            WHERE t.to_branch_id = %s
+              AND t.status IN ('pending','confirmed','active')
+              AND t.effective_date BETWEEN %s AND %s
+              AND e.is_active IS NOT FALSE
+              AND e.home_branch_id != %s
+        """, (branch_id, str(week_start), week_end, branch_id))
+        transfer_emps = cur.fetchall()
+
+        # Merge - avoid duplicates
+        existing_ids = {e['id'] for e in employees}
+        for te in transfer_emps:
+            if te['id'] not in existing_ids:
+                employees.append(te)
+                existing_ids.add(te['id'])
+
+        employees = sorted(employees, key=lambda e: e['full_name'])
 
         cur.execute("""
             SELECT r.employee_id, r.work_date::text, r.is_day_off,
