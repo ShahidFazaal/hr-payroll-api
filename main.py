@@ -6,7 +6,7 @@ Developed by: Shahid Fazaal
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import database as db
-from routers import auth, companies, branches, users, employees, roster, attendance, payroll, settings, payroll_history, leave, documents, email_settings, warnings, file_storage
+from routers import auth, companies, branches, users, employees, roster, attendance, payroll, settings, payroll_history, leave, documents, email_settings, warnings, file_storage, transfers
 
 app = FastAPI(title="HR & Payroll System API")
 
@@ -35,6 +35,7 @@ app.include_router(documents.router,       prefix="/api/documents",        tags=
 app.include_router(email_settings.router,  prefix="/api/email-settings",   tags=["Email Settings"])
 app.include_router(warnings.router,        prefix="/api/warnings",         tags=["Warnings"])
 app.include_router(file_storage.router,    prefix="/api/files",            tags=["File Storage"])
+app.include_router(transfers.router,       prefix="/api/transfers",         tags=["Transfers"])
 
 @app.on_event("startup")
 def startup():
