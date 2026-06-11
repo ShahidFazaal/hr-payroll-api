@@ -273,21 +273,81 @@ def update_transfer(transfer_id: int, data: TransferCreate,
     return {"message": "Transfer updated."}
 
 
-@router.delete("/{transfer_id}")
-def cancel_transfer(transfer_id: int, current_user=Depends(get_current_user)):
+@router.get("/{transfer_id}/check-roster")
+def check_roster_before_cancel(transfer_id: int, current_user=Depends(get_current_user)):
+    """Check if destination branch has roster entries for this employee."""
     conn = db.get_conn()
     with conn.cursor() as cur:
-        # If active, revert employee branch back
         cur.execute("SELECT * FROM employee_transfers WHERE id=%s", (transfer_id,))
         t = cur.fetchone()
-        if t and t["status"] == "active":
+        if not t:
+            raise HTTPException(status_code=404, detail="Transfer not found.")
+
+        # Check roster entries in destination branch from effective date
+        cur.execute("""
+            SELECT COUNT(*) as count,
+                   MIN(work_date::text) as first_date,
+                   MAX(work_date::text) as last_date
+            FROM weekly_roster
+            WHERE employee_id = %s
+              AND branch_id   = %s
+              AND work_date  >= %s
+        """, (t["employee_id"], t["to_branch_id"], t["effective_date"]))
+        roster = cur.fetchone()
+
+        cur.execute("SELECT name FROM branches WHERE id=%s", (t["to_branch_id"],))
+        branch = cur.fetchone()
+
+    conn.close()
+    return {
+        "has_roster":   roster["count"] > 0,
+        "roster_count": roster["count"],
+        "first_date":   roster["first_date"],
+        "last_date":    roster["last_date"],
+        "branch_name":  branch["name"] if branch else "",
+        "employee_id":  t["employee_id"],
+        "to_branch_id": t["to_branch_id"],
+        "effective_date": str(t["effective_date"]),
+    }
+
+
+@router.delete("/{transfer_id}")
+def cancel_transfer(transfer_id: int,
+                    delete_roster: bool = False,
+                    current_user=Depends(get_current_user)):
+    conn = db.get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM employee_transfers WHERE id=%s", (transfer_id,))
+        t = cur.fetchone()
+        if not t:
+            raise HTTPException(status_code=404, detail="Transfer not found.")
+
+        # If active, revert employee branch back
+        if t["status"] == "active":
             cur.execute("UPDATE employees SET home_branch_id=%s WHERE id=%s",
                         (t["from_branch_id"], t["employee_id"]))
+
+        # Delete future roster entries in destination branch if requested
+        roster_deleted = 0
+        if delete_roster:
+            cur.execute("""
+                DELETE FROM weekly_roster
+                WHERE employee_id = %s
+                  AND branch_id   = %s
+                  AND work_date  >= %s
+            """, (t["employee_id"], t["to_branch_id"], t["effective_date"]))
+            roster_deleted = cur.rowcount
+
         cur.execute("UPDATE employee_transfers SET status='cancelled' WHERE id=%s",
                     (transfer_id,))
         conn.commit()
     conn.close()
-    return {"message": "Transfer cancelled. Employee branch reverted."}
+    msg = "Transfer cancelled."
+    if t["status"] == "active":
+        msg += " Employee branch reverted."
+    if roster_deleted > 0:
+        msg += f" {roster_deleted} roster entries removed from destination branch."
+    return {"message": msg}
 
 
 @router.delete("/{transfer_id}/permanent")
