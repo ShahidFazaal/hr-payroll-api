@@ -449,6 +449,23 @@ def migrate_db():
         "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS sent_to_employee BOOLEAN DEFAULT FALSE",
         "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP",
         "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft'",
+        # Transfer module
+        """CREATE TABLE IF NOT EXISTS employee_transfers (
+            id               SERIAL PRIMARY KEY,
+            employee_id      INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+            from_branch_id   INTEGER REFERENCES branches(id),
+            to_branch_id     INTEGER REFERENCES branches(id),
+            transfer_type    TEXT NOT NULL DEFAULT 'permanent',
+            reason_code      TEXT DEFAULT 'OP',
+            reason_notes     TEXT,
+            effective_date   DATE NOT NULL,
+            return_date      DATE,
+            transferred_by   INTEGER REFERENCES users(id),
+            status           TEXT DEFAULT 'pending',
+            from_manager_ack BOOLEAN DEFAULT FALSE,
+            to_manager_ack   BOOLEAN DEFAULT FALSE,
+            created_at       TIMESTAMP DEFAULT NOW()
+        )""",
         "ALTER TABLE warning_letters ADD COLUMN IF NOT EXISTS deduction_applied BOOLEAN DEFAULT FALSE",
         "UPDATE warning_letters SET deduction_applied=FALSE WHERE deduction_applied IS NULL",
         # Fix not-null constraints on warning_letters
